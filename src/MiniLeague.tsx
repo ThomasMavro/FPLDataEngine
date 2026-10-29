@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import CollapsiblePanel from './CollapsiblePanel'
 import { fetchPicks, fetchStandings, FplHttpError, mapLimit } from './api'
 import type { RivalSquad, Strategy } from './lib/advice'
 import { DEFAULT_WINDOW, defaultStrategy, leagueErrorMessage, MAX_RIVALS, selectRivals, standingsGaps, toRival, type Picks, type Standings } from './lib/league'
@@ -68,9 +69,14 @@ export default function MiniLeague({ currentGw, onRivals, onLoadTeam }: Props) {
   const restore = () => { const v = load(); setTeam(v.team); setLeague(v.league); void run(v) }
   const forget = () => { setTeam(''); setLeague(''); try { localStorage.removeItem(KEY) } catch { /* storage unavailable */ } }
   const gaps = st ? standingsGaps(st.rows, userEntry) : null
+  // Hide the loaded league and drop rival advice; the remembered IDs stay for Restore.
+  const clear = () => {
+    setSt(null); setMine(null); setUserEntry(0); setErr(null); setNote(null)
+    onRivals([], 'chasing', null)
+  }
+
   return (
-    <section className="card">
-      <h2>Mini-league</h2>
+    <CollapsiblePanel id="mini-league" title="Mini-league">
       <div className="grid2">
         <label>Your FPL team ID<input inputMode="numeric" value={team} onChange={(e) => edit(e.target.value, league)} placeholder="e.g. 123456" /></label>
         <label>Mini-league ID<input inputMode="numeric" value={league} onChange={(e) => edit(team, e.target.value)} placeholder="classic league" /></label>
@@ -80,6 +86,7 @@ export default function MiniLeague({ currentGw, onRivals, onLoadTeam }: Props) {
         <button className="btn primary" onClick={() => run()} disabled={!!busy}>{busy ?? 'Load league'}</button>
         <button className="btn" onClick={restore} disabled={!!busy}>Restore my league</button>
         <button className="btn" onClick={() => mine && onLoadTeam(mine)} disabled={!mine}>Load my team</button>
+        <button className="btn" onClick={clear} disabled={!!busy || (!st && !err && !note)}>Clear</button>
       </div>
       {(team || league) && <p className="hint"><button className="linkbtn2" onClick={forget}>Forget my IDs</button></p>}
       {err && <div className="msg err" role="alert" style={{ marginTop: 10 }}>{err}</div>}
@@ -100,6 +107,6 @@ export default function MiniLeague({ currentGw, onRivals, onLoadTeam }: Props) {
           </div>
         </>
       )}
-    </section>
+    </CollapsiblePanel>
   )
 }
