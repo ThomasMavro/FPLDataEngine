@@ -4,6 +4,7 @@ import { aggregatePlayer, POS_LABEL, seasonPlayer, STAT_LABEL, STATS, type Boots
 import { scorePlayers } from './scoring'
 import { canAdd, generateSquad, pickLineup, validateSquad, type Cand } from './squad'
 import Pitch from './Pitch'
+import AdvicePanel from './AdvicePanel'
 import { XpChart, XpDetail, type XpEntry } from './XpChart'
 import { buildContext, clampN, DEFAULT_N, fixturesByTeam, MAX_N, MIN_N, playerXp, sumXp, upcomingGws, type GwXp } from './lib/xp'
 
@@ -151,6 +152,8 @@ export default function App() {
     const xi = new Set(lineup.xi.map((c) => c.p.id))
     return squad.map((c) => ({ p: c.p, gws: xpAll.get(c.p.id) ?? [], inXi: xi.has(c.p.id) }))
   }, [squad, lineup, xpAll])
+  const squadPlayers = useMemo(() => squad.map((c) => c.p), [squad])
+  const xiIds = useMemo(() => lineup.xi.map((c) => c.p.id), [lineup])
   const xpTotals = useMemo(() => new Map(squad.map((c) => [c.p.id, sumXp(xpAll.get(c.p.id) ?? [])])), [squad, xpAll])
   const spent = squad.reduce((a, c) => a + c.p.cost, 0)
   const rules = validateSquad(squad.map((c) => c.p), budget)
@@ -267,6 +270,12 @@ export default function App() {
                   </>
                 )}
                 <p className="hint">Model: appearance, goals, assists, clean sheets, goals conceded, saves, bonus and defensive contribution, adjusted by opponent strength; double GWs summed, blanks score 0. Minutes use the last 5 GWs when history is loaded.</p>
+              </section>
+
+              <section className="card">
+                <div className="bar"><h2>Advice</h2></div>
+                <AdvicePanel squad={squadPlayers} pool={base} budget={budget} xp={xpAll} xiIds={xiIds}
+                  fixtures={data.fixtures} gws={xpGws} finishedGws={finishedGws} teams={teams} n={N} getHistory={getCachedHistory} />
               </section>
 
               <section className="card">

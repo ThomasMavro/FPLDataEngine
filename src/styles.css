@@ -61,3 +61,17 @@ td.nm { font-weight:800 } td.sc { font-weight:900; color:var(--purple) } .flag {
 .pcard .pxp { font-size:10px; color:var(--purple); font-weight:700; margin-top:2px } .pname { cursor:pointer }
 .inline { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink) } .inline input[type=number] { width:70px }
 @media (max-width:980px) { .xpdetail { grid-template-columns:1fr } }
+
+/* Advice panel */
+.advice h3 { margin:16px 0 8px; font-size:15px; color:var(--purple) } .advice h3:first-of-type { margin-top:8px }
+.advgrid { display:grid; grid-template-columns:1fr 1fr; gap:16px } .advgrid > div { min-width:0 }
+.advlist { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px } .advlist.cols { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)) }
+.advrow { display:flex; align-items:center; justify-content:space-between; gap:10px; border:1px solid #eee9f1; background:#fff; border-radius:8px; padding:6px 10px; font-size:13px }
+.advrow small { color:var(--muted); font-size:11px; font-weight:600 } .advrow.plan { align-items:flex-start; flex-wrap:wrap }
+.advswaps { flex:1; min-width:200px; display:flex; flex-direction:column; gap:2px } .advswaps .out { color:var(--red); font-weight:700 }
+.advnums { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end }
+.gain { background:var(--purple); color:var(--green); border-radius:999px; padding:1px 9px; font-weight:800; font-size:12px } .cost { color:var(--muted); font-size:12px; font-weight:700 }
+.hit, .tag { border-radius:999px; padding:1px 9px; font-size:11px; font-weight:800 } .hit.yes { background:#e0fff0; color:#006b3a } .hit.no { background:#eee9f1; color:var(--muted) }
+.tag { background:#eee9f1; color:var(--purple) } .tag.captain, .tag.differential { background:var(--green); color:var(--purple) } .tag.vice, .tag.cover { background:var(--cyan); color:var(--purple) }
+.tag.injury { background:#ffe5ee; color:#a0003a } .tag.minutes { background:#fff4d6; color:#7a5200 }
+@media (max-width:760px) { .advgrid { grid-template-columns:1fr } }

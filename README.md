@@ -25,8 +25,14 @@ Import the repo in Vercel (framework preset: Vite). `api/fpl/[...path].ts` is de
 
 ## Not yet done
 
-Transfers/free-hit planning, price-change prediction, persistence of settings.
+Free-hit/wildcard planning, price-change prediction, persistence of settings.
 
 ## Expected points (xP)
 
 `src/lib/xp.ts` documents and implements the xP model (appearance, goals, assists, clean sheets, goals conceded, saves, bonus, defensive contribution, scaled by opponent strength; double GWs summed). "xP (next N GWs)" (N 1-8, default 5) is a table column and a weighting criterion, drives the squad xP chart and per-player detail panel, and can replace the weighted score in the generator via a toggle.
+
+## Advice
+
+`src/lib/advice.ts` (pure, unit-tested) drives the Advice panel: best 1 and 2 transfer plans by xP gain over the next N GWs (budget, position and max-3-per-club respected; "-4 hit worth it" when gain > 4), top 3 captain/vice picks, fixture (FDR) swings and easiest runs, bench-for-starter swaps that keep a valid formation, and injury/low-minutes flags.
+
+Mini-league mode takes rival squads (`{ ids, captain }[]`) and computes effective ownership (owners + captains / rivals). Players are labelled differential (EO < 20%) or cover (EO >= 50%). Transfer score is xP x (1 - EO) when chasing and xP x (1 + EO) when protecting. The UI hides this mode until rival data is passed to `AdvicePanel` (`rivals` prop, not wired yet).
