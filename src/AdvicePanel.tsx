@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { POS_LABEL, type Fixture, type HistoryRow, type Player, type Team } from './fpl'
 import { buildAdvice, effectiveOwnership, type RivalSquad, type Strategy, type TransferPlan } from './lib/advice'
 import type { GwXp } from './lib/xp'
@@ -9,6 +9,8 @@ interface Props {
   getHistory: (id: number) => HistoryRow[] | undefined
   /** Rival squads for mini-league mode. When undefined or empty the mode is hidden. */
   rivals?: RivalSquad[]
+  /** Initial strategy (chasing unless the user leads the league). */
+  defaultStrategy?: Strategy
 }
 
 const tn = (teams: Map<number, Team>, id: number) => teams.get(id)?.short_name ?? '?'
@@ -34,7 +36,8 @@ function Plan({ plan, teams }: { plan: TransferPlan; teams: Map<number, Team> })
 
 export default function AdvicePanel(p: Props) {
   const hasRivals = !!p.rivals && p.rivals.length > 0
-  const [strategy, setStrategy] = useState<Strategy>('chasing')
+  const [strategy, setStrategy] = useState<Strategy>(p.defaultStrategy ?? 'chasing')
+  useEffect(() => { if (p.defaultStrategy) setStrategy(p.defaultStrategy) }, [p.defaultStrategy, p.rivals])
   const [mlOn, setMlOn] = useState(true)
   const eo = useMemo(() => effectiveOwnership(p.rivals ?? []), [p.rivals])
   const advice = useMemo(() => buildAdvice({

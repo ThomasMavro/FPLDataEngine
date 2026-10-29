@@ -25,7 +25,7 @@ Import the repo in Vercel (framework preset: Vite). `api/fpl.ts` is deployed as 
 
 ## Not yet done
 
-Free-hit/wildcard planning, price-change prediction, persistence of settings.
+Free-hit/wildcard planning, price-change prediction.
 
 ## Expected points (xP)
 
@@ -36,3 +36,7 @@ Free-hit/wildcard planning, price-change prediction, persistence of settings.
 `src/lib/advice.ts` (pure, unit-tested) drives the Advice panel: best 1 and 2 transfer plans by xP gain over the next N GWs (budget, position and max-3-per-club respected; "-4 hit worth it" when gain > 4), top 3 captain/vice picks, fixture (FDR) swings and easiest runs, bench-for-starter swaps that keep a valid formation, and injury/low-minutes flags.
 
 Mini-league mode takes rival squads (`{ ids, captain }[]`) and computes effective ownership (owners + captains / rivals). Players are labelled differential (EO < 20%) or cover (EO >= 50%). Transfer score is xP x (1 - EO) when chasing and xP x (1 + EO) when protecting. The UI hides this mode until rival data is passed to `AdvicePanel` (`rivals` prop, not wired yet).
+
+## Mini-league
+
+Enter your FPL team ID and a classic mini-league ID (saved in localStorage). The app fetches `leagues-classic/{id}/standings/` (paginated via `page_standings`, passed through the proxy as `/api/fpl?path=...&page_standings=N`), shows the standings with your row highlighted plus your gap to the leader and the manager above, then loads current-GW picks for you and rivals within 10 places (max 20, 4 at a time). Rival starters and captain feed the Advice panel's mini-league mode (effective ownership, differential/cover, chasing vs protecting; default is chasing unless you lead). "Load my team" fills the pitch from your picks; budget is set to current squad prices plus your bank so remaining equals your real bank.

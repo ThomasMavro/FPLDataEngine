@@ -5,6 +5,9 @@ import { scorePlayers } from './scoring'
 import { canAdd, generateSquad, pickLineup, validateSquad, type Cand } from './squad'
 import Pitch from './Pitch'
 import AdvicePanel from './AdvicePanel'
+import MiniLeague from './MiniLeague'
+import { squadFromPicks, type Picks } from './lib/league'
+import type { RivalSquad, Strategy } from './lib/advice'
 import { XpChart, XpDetail, type XpEntry } from './XpChart'
 import { buildContext, clampN, DEFAULT_N, fixturesByTeam, MAX_N, MIN_N, playerXp, sumXp, upcomingGws, type GwXp } from './lib/xp'
 
@@ -48,6 +51,8 @@ export default function App() {
   const [xpN, setXpN] = useState(String(DEFAULT_N))
   const [xpGen, setXpGen] = useState(false)
   const [selected, setSelected] = useState<number | null>(null)
+  const [rivals, setRivals] = useState<RivalSquad[]>([])
+  const [defStrategy, setDefStrategy] = useState<Strategy>('chasing')
 
   useEffect(() => {
     setError(null)
@@ -161,6 +166,11 @@ export default function App() {
   const activeStats = Object.keys(weights)
   const extraCols = activeStats.filter((k) => !['now_cost', 'minutes', 'total_points', 'xp'].includes(k)).slice(0, 4)
 
+  const loadMyTeam = (p: Picks) => {
+    const r = squadFromPicks(p, (id) => baseById.get(id)?.cost)
+    setSquadIds(r.ids); setLocked([]); setBudget(r.budget)
+    setMsg({ kind: 'ok', text: `Loaded your GW${maxGw} team (${r.ids.length} players, bank £${p.bank.toFixed(1)}m).` })
+  }
   const generate = () => {
     const lockedC = locked.map((id) => baseById.get(id)).filter(Boolean).map((p) => cand(p!))
     const ids = new Set(lockedC.map((c) => c.p.id))
@@ -272,10 +282,12 @@ export default function App() {
                 <p className="hint">Model: appearance, goals, assists, clean sheets, goals conceded, saves, bonus and defensive contribution, adjusted by opponent strength; double GWs summed, blanks score 0. Minutes use the last 5 GWs when history is loaded.</p>
               </section>
 
+              <MiniLeague currentGw={maxGw} onRivals={(r, st) => { setRivals(r); setDefStrategy(st) }} onLoadTeam={loadMyTeam} />
+
               <section className="card">
                 <div className="bar"><h2>Advice</h2></div>
                 <AdvicePanel squad={squadPlayers} pool={base} budget={budget} xp={xpAll} xiIds={xiIds}
-                  fixtures={data.fixtures} gws={xpGws} finishedGws={finishedGws} teams={teams} n={N} getHistory={getCachedHistory} />
+                  fixtures={data.fixtures} gws={xpGws} finishedGws={finishedGws} teams={teams} n={N} getHistory={getCachedHistory} rivals={rivals} defaultStrategy={defStrategy} />
               </section>
 
               <section className="card">
