@@ -26,6 +26,22 @@ async function getJson<T>(path: string, params?: Record<string, string | number>
 export const fetchBootstrap = () => getJson<Bootstrap>('bootstrap-static/')
 export const fetchFixtures = () => getJson<Fixture[]>('fixtures/')
 
+/** Fetch the fixture list, retrying up to `retries` times with a short backoff (FPL sometimes fails intermittently). */
+export async function fetchFixturesRetry(retries = 2, delayMs = 800): Promise<Fixture[]> {
+  let err: unknown
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const f = await fetchFixtures()
+      if (!Array.isArray(f)) throw new Error('Unexpected fixtures response')
+      return f
+    } catch (e) {
+      err = e
+      if (i < retries) await new Promise((r) => setTimeout(r, delayMs * (i + 1)))
+    }
+  }
+  throw err
+}
+
 const cache = new Map<number, HistoryRow[]>()
 export const getCachedHistory = (id: number) => cache.get(id)
 /** In-memory only (per page load); cleared by "Refresh data" so histories are refetched. Nothing is written to localStorage. */
@@ -43,6 +59,9 @@ export async function fetchSummary(id: number): Promise<PlayerSummary> {
   return s
 }
 
+/** Upcoming fixtures of every player whose element-summary has been fetched (deduplicate before use). */
+export const getCachedSummaryFixtures = (): SummaryFixture[] => [...summaryCache.values()].flatMap((s) => s.fixtures)
+
 /** Fetch element-summary history for the given players with limited concurrency; results are cached. */
 export async function fetchHistories(ids: number[], onProgress?: (done: number, total: number) => void, limit = 6, signal?: { cancelled: boolean }) {
   const todo = ids.filter((id) => !cache.has(id))
@@ -51,8 +70,7 @@ export async function fetchHistories(ids: number[], onProgress?: (done: number, 
     while (next < todo.length && !signal?.cancelled) {
       const id = todo[next++]
       try {
-        const d = await getJson<{ history: HistoryRow[] }>(`element-summary/${id}/`)
-        cache.set(id, d.history ?? [])
+        await fetchSummary(id)
       } catch {
         failed++
       }
