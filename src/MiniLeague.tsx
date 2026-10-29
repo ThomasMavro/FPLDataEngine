@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import CollapsiblePanel from './CollapsiblePanel'
 import { fetchPicks, fetchStandings, FplHttpError, mapLimit } from './api'
 import type { RivalSquad, Strategy } from './lib/advice'
 import { DEFAULT_WINDOW, defaultStrategy, leagueErrorMessage, MAX_RIVALS, selectRivals, standingsGaps, toRival, type Picks, type Standings } from './lib/league'
@@ -69,8 +70,7 @@ export default function MiniLeague({ currentGw, onRivals, onLoadTeam }: Props) {
   const forget = () => { setTeam(''); setLeague(''); try { localStorage.removeItem(KEY) } catch { /* storage unavailable */ } }
   const gaps = st ? standingsGaps(st.rows, userEntry) : null
   return (
-    <section className="card">
-      <h2>Mini-league</h2>
+    <CollapsiblePanel id="mini-league" title="Mini-league">
       <div className="grid2">
         <label>Your FPL team ID<input inputMode="numeric" value={team} onChange={(e) => edit(e.target.value, league)} placeholder="e.g. 123456" /></label>
         <label>Mini-league ID<input inputMode="numeric" value={league} onChange={(e) => edit(team, e.target.value)} placeholder="classic league" /></label>
@@ -100,6 +100,6 @@ export default function MiniLeague({ currentGw, onRivals, onLoadTeam }: Props) {
           </div>
         </>
       )}
-    </section>
+    </CollapsiblePanel>
   )
 }

@@ -9,6 +9,7 @@ import Pitch from './Pitch'
 import AdvicePanel from './AdvicePanel'
 import PlayerProfile from './PlayerProfile'
 import { freeSlots, noSlotMessage, pickBanner } from './lib/slots'
+import CollapsiblePanel from './CollapsiblePanel'
 import MiniLeague from './MiniLeague'
 import { squadFromPicks, type Picks } from './lib/league'
 import type { RivalSquad, Strategy } from './lib/advice'
@@ -437,14 +438,16 @@ export default function App() {
                     </>
                   )}
                   <span className="hint">XI shown: {lineup.formation.join('-')}</span>
-                </div>
-                {msg && <div className={`msg ${msg.kind}`}>{msg.text}</div>}
-                {rules.length > 0 && <div className="msg err">{rules.join(' · ')}</div>}
-                <div className="savedrow">
+                  <span className="savebtn">
                   {saveName === null
                     ? <button className="btn small" disabled={squad.length === 0} onClick={() => setSaveName(defaultTeamName(saved))}>Save team</button>
                     : <span className="inline-edit"><input aria-label="Team name" value={saveName} autoFocus maxLength={40} onChange={(e) => setSaveName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') doSave(); if (e.key === 'Escape') setSaveName(null) }} />
                       <button className="btn small primary" onClick={doSave}>Save</button><button className="btn small" onClick={() => setSaveName(null)}>Cancel</button></span>}
+                  </span>
+                </div>
+                {msg && <div className={`msg ${msg.kind}`}>{msg.text}</div>}
+                {rules.length > 0 && <div className="msg err">{rules.join(' · ')}</div>}
+                <div className="savedrow">
                   <button className="btn small" onClick={() => setSavedOpen(!savedOpen)} aria-expanded={savedOpen}>Saved teams ({saved.length}) {savedOpen ? '▲' : '▼'}</button>
                 </div>
                 {savedOpen && (saved.length === 0 ? <p className="hint">No saved teams yet.</p> : (
@@ -471,14 +474,13 @@ export default function App() {
 
               <MiniLeague currentGw={maxGw} onRivals={(r, st, gap) => { setRivals(r); setDefStrategy(st); setLeaderGap(gap) }} onLoadTeam={loadMyTeam} />
 
-              <section className="card">
-                <div className="bar"><h2>Advice</h2></div>
+              <CollapsiblePanel id="advice" title="Advice">
                 <AdvicePanel squad={squadPlayers} pool={base} budget={budget} xp={xpAll} xiIds={xiIds} formation={formation} leaderGap={leaderGap}
                   fixtures={allFixtures} gws={xpGws} finishedGws={finishedGws} teams={teams} n={N} getHistory={getCachedHistory} rivals={rivals} defaultStrategy={defStrategy} />
-              </section>
+              </CollapsiblePanel>
 
-              <section className="card" ref={tableRef}>
-                <div className="bar"><h2>Players ranked by score</h2><span className="hint">{rows.length} players</span>
+              <CollapsiblePanel id="players" title="Players ranked by score" sectionRef={tableRef} extra={<>
+                  <span className="hint">{rows.length} players</span>
                   <div className="seg" role="group" aria-label="Table view" style={{ marginLeft: 'auto' }}>
                     <button className={view === 'criteria' ? 'on' : ''} aria-pressed={view === 'criteria'} onClick={() => setView('criteria')}>Criteria columns</button>
                     <button className={view === 'all' ? 'on' : ''} aria-pressed={view === 'all'} onClick={() => setView('all')}>All stats</button>
@@ -486,7 +488,7 @@ export default function App() {
                   {view === 'all' && <Popover align="right" label="Columns">
                     {optCols.map((c) => <label key={c.id} className="opt"><input type="checkbox" checked={shown(c.id)} onChange={() => toggleCol(c.id)} /> {c.label}</label>)}
                   </Popover>}
-                </div>
+                </>}>
                 {picking && <div className="pickbanner" role="status">{pickBanner(picking.pos)} · <button onClick={cancelPick}>Cancel</button></div>}
                 {msg && msg.kind === 'err' && <div className="msg err">{msg.text}</div>}
                 {rows.length === 0 && <p className="hint">{progress ? 'Loading…' : 'No players match the current filters.'}</p>}
@@ -517,12 +519,10 @@ export default function App() {
                 {rows.length > showN && <button className="btn" style={{ marginTop: 10 }} onClick={() => setShowN(showN + PAGE)}>Show {PAGE} more</button>}
                 <p className="hint note">Data source: the official Fantasy Premier League API (fantasy.premierleague.com), refreshed automatically (cached for at most 5 minutes).
                   xP (expected points) applies FPL's scoring rules to each player's expected minutes, xG, xA, clean-sheet chance and bonus per 90. It is then adjusted for opponent strength over the next {N} gameweek{N === 1 ? '' : 's'}.</p>
-              </section>
+              </CollapsiblePanel>
 
-              <section className="card">
-                <div className="bar"><h2>Expected points, next {N} GWs</h2>
-                  <label className="inline">Gameweeks ({MIN_N}-{MAX_N})<input type="number" min={MIN_N} max={MAX_N} value={xpN} onChange={(e) => setXpN(e.target.value)} onBlur={() => setXpN(String(N))} /></label>
-                </div>
+              <CollapsiblePanel id="xp-chart" title={`Expected points, next ${N} GWs`} extra={
+                  <label className="inline">Gameweeks ({MIN_N}-{MAX_N})<input type="number" min={MIN_N} max={MAX_N} value={xpN} onChange={(e) => setXpN(e.target.value)} onBlur={() => setXpN(String(N))} /></label>}>
                 {squad.length === 0 ? <p className="hint">Add or generate players to see their expected points per gameweek.</p> : xpGws.length === 0 ? <p className="hint">No upcoming gameweeks.</p> : (
                   <>
                     <XpChart entries={xpEntries} gws={xpGws} />
@@ -530,7 +530,7 @@ export default function App() {
                   </>
                 )}
                 <p className="hint">Model: appearance, goals, assists, clean sheets, goals conceded, saves, bonus and defensive contribution, adjusted by opponent strength; double GWs summed, blanks score 0. Minutes use the last 5 GWs when history is loaded.</p>
-              </section>
+              </CollapsiblePanel>
             </div>
           </div>
         )}
