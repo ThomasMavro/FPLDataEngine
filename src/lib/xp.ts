@@ -23,7 +23,7 @@
  * season minutes per start scaled by start share; then times chance_of_playing_next_round/100 (null = 100).
  * Team xGC/90 is estimated from the team's goalkeepers (sum xGC / sum minutes * 90).
  */
-import type { Fixture, HistoryRow, Player, Team } from '../fpl'
+import type { Fixture, HistoryRow, Player, SummaryFixture, Team } from '../fpl'
 
 export const GOAL_PTS: Record<number, number> = { 1: 6, 2: 6, 3: 5, 4: 4 }
 export const CS_PTS: Record<number, number> = { 1: 4, 2: 4, 3: 1, 4: 0 }
@@ -41,6 +41,7 @@ export interface XpContext {
 }
 export interface GwXp { gw: number; total: number; parts: XpParts; fixtures: XpFixture[] }
 
+const num = (v: unknown) => { const x = Number(v); return Number.isFinite(x) ? x : 0 }
 const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x))
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
 const emptyParts = (): XpParts => ({ appearance: 0, goals: 0, assists: 0, cleanSheet: 0, goalsConceded: 0, saves: 0, bonus: 0, defCon: 0, total: 0 })
@@ -52,7 +53,7 @@ export function buildContext(teams: Team[], players: Player[], hasDefCon: boolea
   const gk = new Map<number, { x: number; min: number }>()
   for (const p of players) if (p.pos === 1) {
     const e = gk.get(p.team) ?? { x: 0, min: 0 }
-    e.x += p.stats.expected_goals_conceded; e.min += p.stats.minutes; gk.set(p.team, e)
+    e.x += num(p.stats.expected_goals_conceded); e.min += num(p.stats.minutes); gk.set(p.team, e)
   }
   for (const [t, e] of gk) if (e.min > 0) xgc.set(t, (e.x / e.min) * 90)
   return {
@@ -80,6 +81,23 @@ export function fixturesByTeam(fixtures: Fixture[], gws: number[]): Map<number, 
   return out
 }
 
+/** Convert element-summary fixtures to the bootstrap Fixture shape and merge with `base`, deduplicating by event+home+away (base wins). */
+export function mergeFixtures(base: Fixture[], summary: SummaryFixture[]): Fixture[] {
+  const key = (e: number | null, h: number, a: number) => `${e}-${h}-${a}`
+  const seen = new Set(base.map((f) => key(f.event, f.team_h, f.team_a)))
+  const out = [...base]
+  for (const s of summary) {
+    const k = key(s.event, s.team_h, s.team_a)
+    if (s.event == null || seen.has(k)) continue
+    seen.add(k)
+    out.push({
+      id: -out.length - 1, event: s.event, team_h: s.team_h, team_a: s.team_a, finished: false,
+      team_h_difficulty: s.is_home ? s.difficulty : undefined, team_a_difficulty: s.is_home ? undefined : s.difficulty,
+    })
+  }
+  return out
+}
+
 /** Expected minutes in a future match. */
 export function expectedMinutes(p: Player, history?: HistoryRow[], finishedGws = 0): number {
   let base: number
@@ -87,19 +105,20 @@ export function expectedMinutes(p: Player, history?: HistoryRow[], finishedGws =
     const last = [...history].sort((a, b) => a.round - b.round).slice(-5)
     base = mean(last.map((r) => Number(r.minutes) || 0))
   } else {
-    const { minutes } = p.stats
-    if (p.starts > 0) {
-      const share = finishedGws > 0 ? clamp(p.starts / (0.6 * finishedGws), 0, 1) : 1
-      base = Math.min(90, minutes / p.starts) * share
+    const minutes = Number(p.stats.minutes), starts = Number(p.starts)
+    if (starts > 0) {
+      const share = finishedGws > 0 ? clamp(starts / (0.6 * finishedGws), 0, 1) : 1
+      base = Math.min(90, minutes / starts) * share
     } else base = finishedGws > 0 ? Math.min(90, minutes / finishedGws) : 0
   }
-  return clamp(base, 0, 90) * (p.chance == null ? 1 : clamp(p.chance, 0, 100) / 100)
+  return clamp(base, 0, 90) * (p.chance == null || !Number.isFinite(Number(p.chance)) ? 1 : clamp(Number(p.chance), 0, 100) / 100)
 }
 
 /** xP breakdown for one fixture given expected minutes m. */
 export function fixtureXp(p: Player, m: number, fx: XpFixture, ctx: XpContext): XpParts {
   const parts = emptyParts()
-  const s = p.stats
+  // FPL returns many stats as strings ("2.16"); coerce everything we read.
+  const s = new Proxy(p.stats, { get: (t, k) => num((t as Record<string | symbol, unknown>)[k]) }) as Record<string, number>
   const opp = ctx.teams.get(fx.opp)
   const oppDef = (fx.home ? opp?.strength_defence_away : opp?.strength_defence_home) ?? 0
   const oppAtk = (fx.home ? opp?.strength_attack_away : opp?.strength_attack_home) ?? 0

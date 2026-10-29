@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { clearHistoryCache, fetchBootstrap, fetchFixtures, fetchHistories, getCachedHistory } from './api'
+import { clearHistoryCache, fetchBootstrap, fetchFixturesRetry, fetchHistories, getCachedHistory, getCachedSummaryFixtures } from './api'
 import { aggregatePlayer, currentGameweek, defaultDirection, POS_LABEL, seasonPlayer, STAT_LABEL, STATS, type Bootstrap, type Direction, type Fixture, type Player } from './fpl'
 import { scorePlayers } from './scoring'
 import { canAdd, FORMATION_PRESETS, generateSquad, pickLineup, presetConstraint, validateSquad, type Cand, type FormationConstraint } from './squad'
@@ -13,7 +13,8 @@ import MiniLeague from './MiniLeague'
 import { squadFromPicks, type Picks } from './lib/league'
 import type { RivalSquad, Strategy } from './lib/advice'
 import { XpChart, XpDetail, type XpEntry } from './XpChart'
-import { buildContext, clampN, DEFAULT_N, fixturesByTeam, MAX_N, MIN_N, playerXp, sumXp, upcomingGws, type GwXp } from './lib/xp'
+import { defaultTeamName, deleteTeam, findByName, loadSavedTeams, MAX_SAVED, renameTeam, storeSavedTeams, upsertTeam, type SavedTeam } from './lib/savedTeams'
+import { buildContext, clampN, DEFAULT_N, fixturesByTeam, mergeFixtures, MAX_N, MIN_N, playerXp, sumXp, upcomingGws, type GwXp } from './lib/xp'
 
 type Venue = 'all' | 'home' | 'away'
 const num = (v: string, d: number) => (v.trim() === '' || !Number.isFinite(Number(v)) ? d : Number(v))
@@ -23,6 +24,9 @@ const PAGE = 25
 function loadHidden(): string[] {
   try { const v = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? '[]'); return Array.isArray(v) ? v.map(String) : [] } catch { return [] }
 }
+type ViewMode = 'criteria' | 'all'
+const VIEW_KEY = 'fpl-table-view'
+function loadView(): ViewMode { try { return localStorage.getItem(VIEW_KEY) === 'all' ? 'all' : 'criteria' } catch { return 'criteria' } }
 function saveHidden(v: string[]) { try { localStorage.setItem(HIDDEN_KEY, JSON.stringify(v)) } catch { /* storage unavailable */ } }
 
 /** £-prefixed number input (with optional unit suffix) so the currency sits inside the box. */
@@ -33,7 +37,9 @@ function Money({ value, onChange, step, suffix = 'm' }: { value: number; onChang
 function toggle<T>(arr: T[], v: T) { return arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v] }
 
 export default function App() {
-  const [data, setData] = useState<{ bs: Bootstrap; fixtures: Fixture[] } | null>(null)
+  const [data, setData] = useState<{ bs: Bootstrap } | null>(null)
+  const [bsFixtures, setBsFixtures] = useState<Fixture[]>([])
+  const [fixturesError, setFixturesError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [reload, setReload] = useState(0)
 
@@ -56,6 +62,12 @@ export default function App() {
   const [sortDir, setSortDir] = useState<1 | -1>(-1)
   const [showN, setShowN] = useState(PAGE)
   const [hiddenCols, setHiddenCols] = useState<string[]>(loadHidden)
+  const [view, setViewState] = useState<ViewMode>(loadView)
+  const setView = (v: ViewMode) => { setViewState(v); try { localStorage.setItem(VIEW_KEY, v) } catch { /* storage unavailable */ } }
+  const [saved, setSaved] = useState<SavedTeam[]>(loadSavedTeams)
+  const [saveName, setSaveName] = useState<string | null>(null)
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null)
+  const [savedOpen, setSavedOpen] = useState(false)
   const [fmKey, setFmKey] = useState('any')
   const [fmCustom, setFmCustom] = useState<{ d: string; m: string; f: string; exact: boolean }>({ d: '', m: '', f: '', exact: false })
   const [genMsg, setGenMsg] = useState<{ kind: 'err' | 'ok'; text: string } | null>(null)
@@ -82,17 +94,24 @@ export default function App() {
 
   useEffect(() => {
     setError(null)
-    Promise.all([fetchBootstrap(), fetchFixtures().catch(() => [] as Fixture[])])
-      .then(([bs, fixtures]) => {
+    let cancelled = false
+    fetchBootstrap()
+      .then((bs) => {
+        if (cancelled) return
         if (!bs?.elements?.length) throw new Error('Unexpected response from the FPL API.')
-        setData({ bs, fixtures }); setFetchedAt(new Date())
+        setData({ bs }); setFetchedAt(new Date())
         if (!critInit.current) { // base criteria: defensive_contribution only when the API provides it
           critInit.current = true
           if (!bs.elements.some((e) => 'defensive_contribution' in e)) setWeights(baseCriteria(false))
         }
+        // fixtures after bootstrap (not in parallel), with retries; xP recomputes whenever they arrive
+        setFixturesError(null)
+        fetchFixturesRetry().then((f) => { if (!cancelled) { setBsFixtures(f); setFixturesError(null) } })
+          .catch((e) => { if (!cancelled) setFixturesError(String(e?.message ?? e)) })
       })
-      .catch((e) => setError(String(e?.message ?? e)))
+      .catch((e) => !cancelled && setError(String(e?.message ?? e)))
       .finally(() => setRefreshing(false))
+    return () => { cancelled = true }
   }, [reload])
   const refresh = () => { clearHistoryCache(); setTick((t) => t + 1); setRefreshing(true); setReload((r) => r + 1) }
   const gw = useMemo(() => currentGameweek(data?.bs.events ?? []), [data])
@@ -104,7 +123,9 @@ export default function App() {
   const finishedGws = useMemo(() => (data?.bs.events ?? []).filter((e) => e.finished).length, [data])
   const xpGws = useMemo(() => upcomingGws(data?.bs.events ?? [], N), [data, N])
   const xpCtx = useMemo(() => data ? buildContext(data.bs.teams, base0, data.bs.elements.some((e) => 'defensive_contribution_per_90' in e)) : null, [data, base0])
-  const teamFix = useMemo(() => fixturesByTeam(data?.fixtures ?? [], xpGws), [data, xpGws])
+  // bootstrap fixture list merged with upcoming fixtures from fetched element-summaries (tick = new summaries cached)
+  const allFixtures = useMemo(() => { void tick; return mergeFixtures(bsFixtures, getCachedSummaryFixtures()) }, [bsFixtures, tick])
+  const teamFix = useMemo(() => fixturesByTeam(allFixtures, xpGws), [allFixtures, xpGws])
   // xP per GW for every player; uses last-5-GW minutes from history where it has been loaded (tick refreshes).
   const xpAll = useMemo(() => {
     void tick
@@ -121,13 +142,13 @@ export default function App() {
   }, [data])
   const nextFix = useMemo(() => {
     const m = new Map<number, string>()
-    const up = (data?.fixtures ?? []).filter((f) => !f.finished && f.event).sort((a, b) => a.event! - b.event!)
+    const up = allFixtures.filter((f) => !f.finished && f.event).sort((a, b) => a.event! - b.event!)
     for (const f of up) {
       if (!m.has(f.team_h)) m.set(f.team_h, `${teams.get(f.team_a)?.short_name ?? '?'} (H)`)
       if (!m.has(f.team_a)) m.set(f.team_a, `${teams.get(f.team_h)?.short_name ?? '?'} (A)`)
     }
     return m
-  }, [data, teams])
+  }, [allFixtures, teams])
 
   const from = Math.max(1, num(gwFrom, 1)), to = Math.min(maxGw || 99, num(gwTo, maxGw || 99))
   const rangeSet = (gwFrom !== '' && from > 1) || (gwTo !== '' && to < maxGw)
@@ -186,6 +207,15 @@ export default function App() {
     fetchHistories(sqKey.split(',').map(Number), undefined, 6, sig).then(() => { if (!sig.cancelled) setTick((t) => t + 1) })
     return () => { sig.cancelled = true }
   }, [sqKey])
+  // fixture list unavailable: fetch one regular starter per club so every team has upcoming fixtures
+  useEffect(() => {
+    if (!fixturesError || base0.length === 0) return
+    const best = new Map<number, Player>()
+    for (const p of base0) { const b = best.get(p.team); if (!b || p.stats.minutes > b.stats.minutes) best.set(p.team, p) }
+    const sig = { cancelled: false }
+    fetchHistories([...best.values()].map((p) => p.id), undefined, 6, sig).then(() => { if (!sig.cancelled) setTick((t) => t + 1) })
+    return () => { sig.cancelled = true }
+  }, [fixturesError, base0])
   const formation: FormationConstraint | undefined = useMemo(() => {
     if (fmKey === 'any') return undefined
     if (fmKey !== 'custom') return presetConstraint(fmKey)
@@ -207,10 +237,12 @@ export default function App() {
   const rules = validateSquad(squad.map((c) => c.p), budget)
 
   const activeStats = Object.keys(weights)
-  const extraCols = activeStats.filter((k) => !['now_cost', 'minutes', 'total_points', 'xp'].includes(k))
-  const optCols = [{ id: 'minutes', label: 'Mins' }, { id: 'total_points', label: 'Pts' }, ...extraCols.map((k) => ({ id: k, label: STAT_LABEL[k] })),
-    { id: 'next', label: 'Next fixture' }, { id: 'xp', label: `xP (${N} GW)` }]
-  const shown = (id: string) => !hiddenCols.includes(id)
+  const xpLabel = `xP (${N} GW)`
+  const optCols = view === 'criteria'
+    ? activeStats.filter((k) => k !== 'now_cost').map((k) => ({ id: k, label: k === 'xp' ? xpLabel : STAT_LABEL[k] }))
+    : [...STATS.filter((st) => st.key !== 'now_cost' && st.key !== 'xp' && (st.key !== 'defensive_contribution' || hasDefCon)).map((st) => ({ id: st.key, label: st.label })),
+      { id: 'next', label: 'Next fixture' }, { id: 'xp', label: xpLabel }]
+  const shown = (id: string) => view === 'criteria' || !hiddenCols.includes(id)
   const toggleCol = (id: string) => { const v = toggle(hiddenCols, id); setHiddenCols(v); saveHidden(v) }
   const dirOf = (k: string): Direction => dirs[k] ?? defaultDirection(k)
 
@@ -223,6 +255,30 @@ export default function App() {
     setSquadIds([]); setLocked([]); setExcluded([]); setMsg(null); setGenMsg(null); setFmKey('any'); setFmCustom({ d: '', m: '', f: '', exact: false })
   }
 
+  const fmString = fmKey === 'custom' ? `custom:${fmCustom.d}|${fmCustom.m}|${fmCustom.f}|${fmCustom.exact ? 1 : 0}` : fmKey
+  const persist = (next: SavedTeam[]) => { setSaved(next); if (!storeSavedTeams(next)) setMsg({ kind: 'err', text: 'Could not store saved teams in this browser.' }) }
+  const doSave = () => {
+    const name = (saveName ?? '').trim()
+    if (!name) return setMsg({ kind: 'err', text: 'Give the team a name.' })
+    const ex = findByName(saved, name)
+    if (ex && !window.confirm(`Overwrite the saved team "${ex.name}"?`)) return
+    const next = upsertTeam(saved, { name, savedAt: Date.now(), playerIds: squadIds, lockedIds: locked.filter((id) => squadIds.includes(id)), formation: fmString, budget })
+    if (!next) return setMsg({ kind: 'err', text: `You can save at most ${MAX_SAVED} teams. Delete one first.` })
+    persist(next); setSaveName(null); setSavedOpen(true); setMsg({ kind: 'ok', text: `Saved "${name}".` })
+  }
+  const loadSaved = (t: SavedTeam) => {
+    const ids = t.playerIds.filter((id) => baseById.has(id))
+    setSquadIds(ids); setLocked(t.lockedIds.filter((id) => ids.includes(id))); setBudget(t.budget)
+    if (t.formation.startsWith('custom:')) {
+      const [d, m, f, e] = t.formation.slice(7).split('|'); setFmKey('custom'); setFmCustom({ d: d ?? '', m: m ?? '', f: f ?? '', exact: e === '1' })
+    } else setFmKey(t.formation === 'any' || FORMATION_PRESETS.includes(t.formation) ? t.formation : 'any')
+    setMsg({ kind: 'ok', text: `Loaded "${t.name}"${ids.length < t.playerIds.length ? ` (${t.playerIds.length - ids.length} players no longer available)` : ''}.` })
+  }
+  const savedStats = (t: SavedTeam) => {
+    let price = 0, score = 0, xp = 0
+    for (const id of t.playerIds) { const p = baseById.get(id); if (!p) continue; price += p.cost; score += scores.get(id) ?? 0; xp += sumXp(xpAll.get(id) ?? []) }
+    return { price, score, xp }
+  }
   const loadMyTeam = (p: Picks) => {
     const r = squadFromPicks(p, (id) => baseById.get(id)?.cost)
     setSquadIds(r.ids); setLocked([]); setBudget(r.budget)
@@ -265,7 +321,7 @@ export default function App() {
   const critTotal = totalWeight(weights)
   const cell = (id: string, c: Cand) =>
     id === 'minutes' ? Math.round(c.p.stats.minutes) : id === 'total_points' ? c.p.stats.total_points
-    : id === 'next' ? (nextFix.get(c.p.team) ?? '-') : id === 'xp' ? (c.p.stats.xp ?? 0).toFixed(1) : (c.p.stats[id] ?? 0).toFixed(2)
+    : id === 'next' ? (nextFix.get(c.p.team) ?? '-') : id === 'xp' ? (c.p.stats.xp ?? 0).toFixed(1) : Number.isInteger(c.p.stats[id] ?? 0) ? (c.p.stats[id] ?? 0) : (c.p.stats[id] ?? 0).toFixed(2)
   const sortable = (id: string) => id !== 'next'
 
   return (
@@ -285,6 +341,9 @@ export default function App() {
             <p>The FPL API may be down, blocked, or the proxy is not running. No data is shown until live data loads.</p>
             <button className="btn" onClick={refresh}>Try again</button>
           </div>
+        )}
+        {fixturesError && (
+          <div className="msg err" role="alert">Couldn't load the fixture list from FPL: {fixturesError}. xP uses fixtures from loaded player data instead.</div>
         )}
         {!error && !data && <div className="card">Loading live FPL data…</div>}
         {data && (
@@ -381,6 +440,31 @@ export default function App() {
                 </div>
                 {msg && <div className={`msg ${msg.kind}`}>{msg.text}</div>}
                 {rules.length > 0 && <div className="msg err">{rules.join(' · ')}</div>}
+                <div className="savedrow">
+                  {saveName === null
+                    ? <button className="btn small" disabled={squad.length === 0} onClick={() => setSaveName(defaultTeamName(saved))}>Save team</button>
+                    : <span className="inline-edit"><input aria-label="Team name" value={saveName} autoFocus maxLength={40} onChange={(e) => setSaveName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') doSave(); if (e.key === 'Escape') setSaveName(null) }} />
+                      <button className="btn small primary" onClick={doSave}>Save</button><button className="btn small" onClick={() => setSaveName(null)}>Cancel</button></span>}
+                  <button className="btn small" onClick={() => setSavedOpen(!savedOpen)} aria-expanded={savedOpen}>Saved teams ({saved.length}) {savedOpen ? '▲' : '▼'}</button>
+                </div>
+                {savedOpen && (saved.length === 0 ? <p className="hint">No saved teams yet.</p> : (
+                  <ul className="savedlist">
+                    {saved.map((t) => { const st = savedStats(t); return (
+                      <li key={t.id}>
+                        {renaming?.id === t.id
+                          ? <span className="inline-edit"><input aria-label="New name" value={renaming.name} autoFocus onChange={(e) => setRenaming({ id: t.id, name: e.target.value })}
+                              onKeyDown={(e) => { if (e.key === 'Escape') setRenaming(null); if (e.key === 'Enter') { const n2 = renameTeam(saved, t.id, renaming.name); if (n2) { persist(n2); setRenaming(null) } else setMsg({ kind: 'err', text: 'That name is empty or already used.' }) } }} />
+                            <button className="btn small" onClick={() => { const n2 = renameTeam(saved, t.id, renaming.name); if (n2) { persist(n2); setRenaming(null) } else setMsg({ kind: 'err', text: 'That name is empty or already used.' }) }}>OK</button></span>
+                          : <b>{t.name}</b>}
+                        <small>£{st.price.toFixed(1)}m · {t.playerIds.length} players · score {st.score.toFixed(1)} · xP {st.xp.toFixed(1)}</small>
+                        <span className="acts">
+                          <button onClick={() => loadSaved(t)}>Load</button>
+                          <button onClick={() => setRenaming({ id: t.id, name: t.name })}>Rename</button>
+                          <button onClick={() => { if (window.confirm(`Delete saved team "${t.name}"?`)) persist(deleteTeam(saved, t.id)) }}>Delete</button>
+                        </span>
+                      </li>) })}
+                  </ul>
+                ))}
                 <Pitch squad={squad} lineup={lineup} teams={teams} locked={new Set(locked)} onRemove={remove} onLock={lockToggle} xp={xpTotals} onSelect={(id) => { setSelected(id); setProfileId(id) }} onEmpty={startPick} picking={picking?.pos ?? null} />
                 {excluded.length > 0 && <p className="hint">Excluded: {excluded.map((id) => <button key={id} className="chip on" onClick={() => excludeToggle(id)}>{baseById.get(id)?.name} x</button>)}</p>}
               </section>
@@ -390,14 +474,18 @@ export default function App() {
               <section className="card">
                 <div className="bar"><h2>Advice</h2></div>
                 <AdvicePanel squad={squadPlayers} pool={base} budget={budget} xp={xpAll} xiIds={xiIds} formation={formation} leaderGap={leaderGap}
-                  fixtures={data.fixtures} gws={xpGws} finishedGws={finishedGws} teams={teams} n={N} getHistory={getCachedHistory} rivals={rivals} defaultStrategy={defStrategy} />
+                  fixtures={allFixtures} gws={xpGws} finishedGws={finishedGws} teams={teams} n={N} getHistory={getCachedHistory} rivals={rivals} defaultStrategy={defStrategy} />
               </section>
 
               <section className="card" ref={tableRef}>
                 <div className="bar"><h2>Players ranked by score</h2><span className="hint">{rows.length} players</span>
-                  <div style={{ marginLeft: 'auto' }}><Popover align="right" label="Columns">
+                  <div className="seg" role="group" aria-label="Table view" style={{ marginLeft: 'auto' }}>
+                    <button className={view === 'criteria' ? 'on' : ''} aria-pressed={view === 'criteria'} onClick={() => setView('criteria')}>Criteria columns</button>
+                    <button className={view === 'all' ? 'on' : ''} aria-pressed={view === 'all'} onClick={() => setView('all')}>All stats</button>
+                  </div>
+                  {view === 'all' && <Popover align="right" label="Columns">
                     {optCols.map((c) => <label key={c.id} className="opt"><input type="checkbox" checked={shown(c.id)} onChange={() => toggleCol(c.id)} /> {c.label}</label>)}
-                  </Popover></div>
+                  </Popover>}
                 </div>
                 {picking && <div className="pickbanner" role="status">{pickBanner(picking.pos)} · <button onClick={cancelPick}>Cancel</button></div>}
                 {msg && msg.kind === 'err' && <div className="msg err">{msg.text}</div>}

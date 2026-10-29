@@ -29,11 +29,12 @@ export default function MiniLeague({ currentGw, onRivals, onLoadTeam }: Props) {
   const [mine, setMine] = useState<Picks | null>(null)
   const [userEntry, setUserEntry] = useState(0)
 
-  const run = async () => {
-    const teamId = id(team), leagueId = id(league)
+  const run = async (ov?: { team: string; league: string }) => {
+    const tv = ov?.team ?? team, lv = ov?.league ?? league
+    const teamId = id(tv), leagueId = id(lv)
     if (!teamId || !leagueId) return setErr('Enter numeric IDs for both your team and the mini-league.')
     if (currentGw < 1) return setErr('No gameweek has been played yet, so there are no picks to load.')
-    save({ team, league })
+    save({ team: tv, league: lv })
     setErr(null); setNote(null); setSt(null); setMine(null); setBusy('Loading standings…')
     try {
       let s: Standings
@@ -62,19 +63,25 @@ export default function MiniLeague({ currentGw, onRivals, onLoadTeam }: Props) {
     } finally { setBusy(null) }
   }
 
+  // IDs are persisted as soon as they are edited, and survive "Reset everything" (which never touches this panel).
+  const edit = (t: string, l: string) => { setTeam(t); setLeague(l); save({ team: t, league: l }) }
+  const restore = () => { const v = load(); setTeam(v.team); setLeague(v.league); void run(v) }
+  const forget = () => { setTeam(''); setLeague(''); try { localStorage.removeItem(KEY) } catch { /* storage unavailable */ } }
   const gaps = st ? standingsGaps(st.rows, userEntry) : null
   return (
     <section className="card">
       <h2>Mini-league</h2>
       <div className="grid2">
-        <label>Your FPL team ID<input inputMode="numeric" value={team} onChange={(e) => setTeam(e.target.value)} placeholder="e.g. 123456" /></label>
-        <label>Mini-league ID<input inputMode="numeric" value={league} onChange={(e) => setLeague(e.target.value)} placeholder="classic league" /></label>
+        <label>Your FPL team ID<input inputMode="numeric" value={team} onChange={(e) => edit(e.target.value, league)} placeholder="e.g. 123456" /></label>
+        <label>Mini-league ID<input inputMode="numeric" value={league} onChange={(e) => edit(team, e.target.value)} placeholder="classic league" /></label>
         <label>Rivals within<input type="number" min={1} max={50} value={windowSz} onChange={(e) => setWindowSz(Math.max(1, Number(e.target.value) || DEFAULT_WINDOW))} /></label>
       </div>
       <div className="btns" style={{ marginTop: 10 }}>
-        <button className="btn primary" onClick={run} disabled={!!busy}>{busy ?? 'Load league'}</button>
+        <button className="btn primary" onClick={() => run()} disabled={!!busy}>{busy ?? 'Load league'}</button>
+        <button className="btn" onClick={restore} disabled={!!busy}>Restore my league</button>
         <button className="btn" onClick={() => mine && onLoadTeam(mine)} disabled={!mine}>Load my team</button>
       </div>
+      {(team || league) && <p className="hint"><button className="linkbtn2" onClick={forget}>Forget my IDs</button></p>}
       {err && <div className="msg err" role="alert" style={{ marginTop: 10 }}>{err}</div>}
       {note && <div className="msg ok" style={{ marginTop: 10 }}>{note}</div>}
       {st && gaps && (

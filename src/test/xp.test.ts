@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { seasonPlayer, type Fixture, type Player, type Team } from '../fpl'
-import { buildContext, clampN, expectedMinutes, fixtureXp, fixturesByTeam, playerXp, sumXp, upcomingGws } from '../lib/xp'
+import { mergeFixtures, buildContext, clampN, expectedMinutes, fixtureXp, fixturesByTeam, playerXp, sumXp, upcomingGws } from '../lib/xp'
 import { elements } from './fixture'
 
 const mk = (id: number, atk: number, def: number): Team => ({
@@ -92,5 +92,26 @@ describe('gameweek aggregation', () => {
     const single = fixtureXp(base(3), 90, { gw: 12, opp: 3, home: true }, ctx()).total + fixtureXp(base(3), 90, { gw: 12, opp: 2, home: false }, ctx()).total
     expect(out[2].total).toBeCloseTo(single)
     expect(sumXp(out)).toBeCloseTo(out[0].total + out[2].total)
+  })
+})
+
+describe('real-data robustness', () => {
+  it('string-valued FPL fields still give non-zero xP', () => {
+    const el = { ...elements.find((e) => e.element_type === 3)!, team: 1, minutes: '1800', starts: '20', chance_of_playing_next_round: null,
+      expected_goals_per_90: '0.45', expected_assists_per_90: '0.25', expected_goals_conceded: '20.5', bonus: '12', saves_per_90: '0' }
+    const p = seasonPlayer(el)
+    const c = buildContext(teams, [p], false)
+    const xp = playerXp(p, [3], [{ gw: 3, opp: 2, home: true }], c, undefined, 20)
+    expect(xp[0].total).toBeGreaterThan(2)
+    // even if raw strings reach the model (unconverted stats), it must not zero out
+    const raw = { ...p, starts: '20' as unknown as number, stats: Object.fromEntries(Object.entries(p.stats).map(([k, v]) => [k, String(v)])) as unknown as Record<string, number> }
+    expect(playerXp(raw, [3], [{ gw: 3, opp: 2, home: true }], c, undefined, 20)[0].total).toBeCloseTo(xp[0].total)
+  })
+  it('merges element-summary fixtures into an empty list and dedupes', () => {
+    const sf = [{ event: 3, is_home: true, difficulty: 2, team_h: 1, team_a: 2 }, { event: 3, is_home: false, difficulty: 3, team_h: 1, team_a: 2 }, { event: 4, is_home: false, difficulty: 3, team_h: 3, team_a: 1 }]
+    const m = mergeFixtures([], sf)
+    expect(m).toHaveLength(2)
+    expect(fixturesByTeam(m, [3, 4]).get(1)).toHaveLength(2)
+    expect(mergeFixtures(m, sf)).toHaveLength(2)
   })
 })
