@@ -3,8 +3,11 @@ import type { Bootstrap, Fixture, HistoryRow } from './fpl'
 const BASE = '/api/fpl'
 
 async function getJson<T>(path: string): Promise<T> {
-  const r = await fetch(`${BASE}/${path}`)
-  if (!r.ok) throw new Error(`FPL API responded ${r.status} for ${path}`)
+  const r = await fetch(`${BASE}?path=${encodeURIComponent(path)}`)
+  if (!r.ok) {
+    const detail = (await r.text().catch(() => '')).slice(0, 300)
+    throw new Error(`FPL API responded ${r.status} for ${path}${detail ? ` — ${detail}` : ''}`)
+  }
   return (await r.json()) as T
 }
 

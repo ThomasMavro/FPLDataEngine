@@ -15,7 +15,7 @@ npm run build    # type-check + production build
 
 ## Deploy to Vercel
 
-Import the repo in Vercel (framework preset: Vite). `api/fpl/[...path].ts` is deployed as a serverless function that forwards GET requests to the FPL API, which avoids CORS. `vercel.json` adds an SPA fallback.
+Import the repo in Vercel (framework preset: Vite). `api/fpl.ts` is deployed as a serverless function (the client calls `/api/fpl?path=<path>`) that forwards GET requests to the FPL API, which avoids CORS. `vercel.json` adds an SPA fallback.
 
 ## How it works
 
