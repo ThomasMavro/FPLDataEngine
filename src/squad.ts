@@ -3,6 +3,19 @@ import { MAX_PER_CLUB, SQUAD_SIZE, type Player } from './fpl'
 export interface Cand { p: Player; score: number }
 export interface GenInput {
   pool: Cand[]; budget: number; locked: Set<number>; excluded: Set<number>
+  /** Optional starting-XI shape; the squad stays 2/5/5/3 but upgrades concentrate on players who can start. */
+  formation?: FormationConstraint
+}
+
+/**
+ * Optional constraint on the starting XI. `max` caps DEF/MID/FWD in the XI (undefined = no cap); with `exact` the XI must
+ * use exactly those numbers (needs all three to be set and sum to 10, as the presets do). Squad composition is unaffected.
+ */
+export interface FormationConstraint { max: { 2?: number; 3?: number; 4?: number }; exact?: boolean }
+export const FORMATION_PRESETS = ['3-4-3', '3-5-2', '4-4-2', '4-3-3', '4-5-1', '5-3-2', '5-4-1', '5-2-3']
+export function presetConstraint(label: string): FormationConstraint | undefined {
+  const m = /^(\d)-(\d)-(\d)$/.exec(label)
+  return m ? { max: { 2: +m[1], 3: +m[2], 4: +m[3] }, exact: true } : undefined
 }
 export type GenResult = { ok: true; squad: Cand[] } | { ok: false; error: string }
 
@@ -10,7 +23,7 @@ const EPS = 1e-9
 const cost = (xs: Cand[]) => xs.reduce((a, c) => a + c.p.cost, 0)
 
 /** Greedy (with budget reserve) + single-swap hill climbing. Locked players always kept; excluded never used. */
-export function generateSquad({ pool, budget, locked, excluded }: GenInput): GenResult {
+export function generateSquad({ pool, budget, locked, excluded, formation }: GenInput): GenResult {
   const cands = pool.filter((c) => !excluded.has(c.p.id) || locked.has(c.p.id))
   const lockedC = cands.filter((c) => locked.has(c.p.id))
   const need: Record<number, number> = { ...SQUAD_SIZE }
@@ -61,12 +74,15 @@ export function generateSquad({ pool, budget, locked, excluded }: GenInput): Gen
   for (let iter = 0; iter < 200; iter++) {
     let best: { i: number; c: Cand; gain: number } | null = null
     const total = cost(squad)
+    // With a formation, bench players matter much less than starters.
+    const xi = formation ? new Set(pickLineup(squad, formation).xi.map((c) => c.p.id)) : null
     squad.forEach((cur, i) => {
       if (locked.has(cur.p.id)) return
+      const wt = xi && !xi.has(cur.p.id) ? 0.1 : 1
       const clubCount = (t: number) => squad.filter((s) => s.p.team === t).length
       for (const c of free) {
         if (c.p.pos !== cur.p.pos || inSquad.has(c.p.id)) continue
-        const gain = c.score - cur.score
+        const gain = (c.score - cur.score) * wt
         if (gain <= 1e-9 || (best && gain <= best.gain)) continue
         if (total - cur.p.cost + c.p.cost > budget + EPS) continue
         if (c.p.team !== cur.p.team && clubCount(c.p.team) >= MAX_PER_CLUB) continue
@@ -84,13 +100,27 @@ export interface Lineup { xi: Cand[]; bench: Cand[]; captain: Cand | null; forma
 export const FORMATIONS: [number, number, number][] = []
 for (let d = 3; d <= 5; d++) for (let m = 2; m <= 5; m++) for (let f = 1; f <= 3; f++) if (d + m + f === 10) FORMATIONS.push([d, m, f])
 
-/** Best XI over all valid formations; works on partial squads too (takes what is available). */
-export function pickLineup(squad: Cand[]): Lineup {
+export function formationAllowed(fm: readonly number[], c?: FormationConstraint): boolean {
+  if (!c) return true
+  return [2, 3, 4].every((pos, i) => {
+    const cap = c.max[pos as 2 | 3 | 4]
+    return cap == null || (c.exact ? fm[i] === cap : fm[i] <= cap)
+  })
+}
+/** Formations allowed by the constraint; falls back to all of them if the constraint is unsatisfiable. */
+export function allowedFormations(c?: FormationConstraint): [number, number, number][] {
+  const ok = FORMATIONS.filter((f) => formationAllowed(f, c))
+  return ok.length ? ok : FORMATIONS
+}
+
+/** Best XI over all valid (and allowed) formations; works on partial squads too (takes what is available). */
+export function pickLineup(squad: Cand[], constraint?: FormationConstraint): Lineup {
   const by = (pos: number) => squad.filter((c) => c.p.pos === pos).sort((a, b) => b.score - a.score)
   const g = by(1), d = by(2), m = by(3), f = by(4)
   const sum = (xs: Cand[], k: number) => xs.slice(0, k).reduce((a, c) => a + c.score, 0)
-  let best = FORMATIONS[0], bestVal = -Infinity
-  for (const fm of FORMATIONS) {
+  const fms = allowedFormations(constraint)
+  let best = fms[0], bestVal = -Infinity
+  for (const fm of fms) {
     const filled = Math.min(d.length, fm[0]) + Math.min(m.length, fm[1]) + Math.min(f.length, fm[2])
     const val = sum(d, fm[0]) + sum(m, fm[1]) + sum(f, fm[2]) + filled * 1e-6 // prefer fuller XIs on ties
     if (val > bestVal) { bestVal = val; best = fm }

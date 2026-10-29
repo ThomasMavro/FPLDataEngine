@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { POS_LABEL, type Fixture, type HistoryRow, type Player, type Team } from './fpl'
-import { buildAdvice, effectiveOwnership, type RivalSquad, type Strategy, type TransferPlan } from './lib/advice'
+import { buildAdvice, effectiveOwnership, generalSummary, recommendationSummary, type RivalSquad, type Strategy, type TransferPlan } from './lib/advice'
 import type { GwXp } from './lib/xp'
+import type { FormationConstraint } from './squad'
 
 interface Props {
   squad: Player[]; pool: Player[]; budget: number; xp: Map<number, GwXp[]>; xiIds: number[]
@@ -11,6 +12,10 @@ interface Props {
   rivals?: RivalSquad[]
   /** Initial strategy (chasing unless the user leads the league). */
   defaultStrategy?: Strategy
+  /** Optional starting-XI shape that bench advice must keep. */
+  formation?: FormationConstraint
+  /** Points behind the league leader (0 = leading), for the recommendation summary. */
+  leaderGap?: number | null
 }
 
 const tn = (teams: Map<number, Team>, id: number) => teams.get(id)?.short_name ?? '?'
@@ -39,25 +44,32 @@ export default function AdvicePanel(p: Props) {
   const [strategy, setStrategy] = useState<Strategy>(p.defaultStrategy ?? 'chasing')
   useEffect(() => { if (p.defaultStrategy) setStrategy(p.defaultStrategy) }, [p.defaultStrategy, p.rivals])
   const [mlOn, setMlOn] = useState(true)
+  const [showRec, setShowRec] = useState(true)
+  useEffect(() => { setShowRec(true) }, [p.rivals])
   const eo = useMemo(() => effectiveOwnership(p.rivals ?? []), [p.rivals])
   const advice = useMemo(() => buildAdvice({
     squad: p.squad, pool: p.pool, budget: p.budget, xp: p.xp, xiIds: p.xiIds, fixtures: p.fixtures, gws: p.gws,
-    finishedGws: p.finishedGws, getHistory: p.getHistory, miniLeague: hasRivals && mlOn ? { eo, strategy } : undefined,
-  }, hasRivals ? p.rivals : undefined), [p.squad, p.pool, p.budget, p.xp, p.xiIds, p.fixtures, p.gws, p.finishedGws, p.getHistory, hasRivals, mlOn, eo, strategy, p.rivals])
+    finishedGws: p.finishedGws, getHistory: p.getHistory, formation: p.formation, miniLeague: hasRivals && mlOn ? { eo, strategy } : undefined,
+  }, hasRivals ? p.rivals : undefined), [p.squad, p.pool, p.budget, p.xp, p.xiIds, p.fixtures, p.gws, p.finishedGws, p.getHistory, p.formation, hasRivals, mlOn, eo, strategy, p.rivals])
 
   if (p.squad.length < 15) return <p className="hint">Build a full squad of 15 to get advice.</p>
   if (p.gws.length === 0) return <p className="hint">No upcoming gameweeks.</p>
   const none = <p className="hint">Nothing to suggest.</p>
+  const summary = hasRivals && mlOn && showRec
+    ? recommendationSummary({ advice, rivals: p.rivals!, strategy, n: p.n, leaderGap: p.leaderGap })
+    : generalSummary(advice, p.n)
   const spent = p.squad.reduce((a, x) => a + x.cost, 0)
 
   return (
     <div className="advice">
+      <p className="advsummary">{summary}</p>
       <p className="hint">Bank £{(p.budget - spent).toFixed(1)}m · xP over the next {p.n} GW{p.n > 1 ? 's' : ''} (next GW {p.gws[0]}). A hit costs 4 points.</p>
       {hasRivals && (
         <div className="bar">
           <label className="check"><input type="checkbox" checked={mlOn} onChange={(e) => setMlOn(e.target.checked)} /> Mini-league mode</label>
           {mlOn && <div className="chips">
-            {(['chasing', 'protecting'] as const).map((s) => <button key={s} className={`chip ${strategy === s ? 'on' : ''}`} onClick={() => setStrategy(s)}>{s === 'chasing' ? 'Chasing' : 'Protecting'}</button>)}
+            <button className={`chip ${showRec ? 'on' : ''}`} onClick={() => setShowRec(true)}>Recommendations</button>
+            {(['chasing', 'protecting'] as const).map((s) => <button key={s} className={`chip ${!showRec && strategy === s ? 'on' : ''}`} onClick={() => { setStrategy(s); setShowRec(false) }}>{s === 'chasing' ? 'Chasing' : 'Protecting'}</button>)}
           </div>}
         </div>
       )}

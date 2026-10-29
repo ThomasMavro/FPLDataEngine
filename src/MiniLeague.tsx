@@ -5,7 +5,7 @@ import { DEFAULT_WINDOW, defaultStrategy, leagueErrorMessage, MAX_RIVALS, select
 
 interface Props {
   currentGw: number
-  onRivals: (r: RivalSquad[], strategy: Strategy) => void
+  onRivals: (r: RivalSquad[], strategy: Strategy, leaderGap: number | null) => void
   onLoadTeam: (p: Picks) => void
 }
 
@@ -54,11 +54,11 @@ export default function MiniLeague({ currentGw, onRivals, onLoadTeam }: Props) {
       setMine(mineP)
       const rivals = rp.filter((p): p is Picks => !!p).map(toRival)
       const failed = rp.length - rivals.length
-      onRivals(rivals, defaultStrategy(me.rank))
+      onRivals(rivals, defaultStrategy(me.rank), standingsGaps(s.rows, teamId)?.leaderGap ?? null)
       setNote(`${rivals.length} rival squad${rivals.length === 1 ? '' : 's'} loaded for GW${currentGw}${failed ? `, ${failed} failed` : ''}.${rivals.length === 0 ? ' Mini-league mode needs at least one rival.' : ''}`)
     } catch (e) {
       setErr((e as Error).message)
-      onRivals([], 'chasing')
+      onRivals([], 'chasing', null)
     } finally { setBusy(null) }
   }
 

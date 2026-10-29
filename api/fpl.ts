@@ -26,7 +26,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(r.status).json({ error: 'FPL API error', upstreamStatus: r.status, target, snippet: body.slice(0, 200) })
     }
     res.setHeader('Content-Type', r.headers.get('content-type') ?? 'application/json')
-    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=600')
+    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=60')
     return res.status(r.status).send(body)
   } catch (e) {
     return res.status(502).json({ error: 'Upstream FPL API unreachable', detail: String(e) })

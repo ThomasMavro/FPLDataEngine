@@ -20,7 +20,9 @@ Import the repo in Vercel (framework preset: Vite). `api/fpl.ts` is deployed as 
 ## How it works
 
 - Season totals come from `bootstrap-static/`. When a gameweek range or home/away filter is set, stats are re-aggregated from `element-summary/{id}/` history (fetched lazily, 6 at a time, cached in memory).
-- Score = sum of `weight * min-max normalised stat` over the filtered pool (optionally per position). Weights may be negative.
+- Criteria weights are whole percentages that always sum to 100 (changing one rescales the others; "Equalise" resets to equal shares). Each criterion has a higher/lower-is-better direction (default lower for goals conceded, cards, xGC, price...). Score = sum of `weight% * min-max normalised stat` (inverted when lower is better), 0-100, over the filtered pool (optionally per position). Base criteria: goals, assists, total points, clean sheets, defensive contribution (if the API has it), 20% each.
+- Optional formation constraint (presets or custom max DEF/MID/FWD) shapes the starting XI, the generator's upgrades and bench advice; squads stay 2/5/5/3.
+- Freshness: the edge cache is `s-maxage=300, stale-while-revalidate=60`; the header shows when data was fetched and the current gameweek, with a "Refresh data" button. No FPL data is stored in localStorage (only UI preferences like hidden table columns and league IDs).
 - Squad generator: greedy by score with a budget reserve, then single-swap hill climbing. Locked players are kept, excluded players are never used. It is a heuristic, not a proven optimum.
 
 ## Not yet done
@@ -29,7 +31,7 @@ Free-hit/wildcard planning, price-change prediction.
 
 ## Expected points (xP)
 
-`src/lib/xp.ts` documents and implements the xP model (appearance, goals, assists, clean sheets, goals conceded, saves, bonus, defensive contribution, scaled by opponent strength; double GWs summed). "xP (next N GWs)" (N 1-8, default 5) is a table column and a weighting criterion, drives the squad xP chart and per-player detail panel, and can replace the weighted score in the generator via a toggle.
+`src/lib/xp.ts` documents and implements the xP model (appearance, goals, assists, clean sheets, goals conceded, saves, bonus, defensive contribution, scaled by opponent strength; double GWs summed). "xP (next N GWs)" (N 1-8, default 5) is a table column and a weighting criterion, drives the squad xP chart and per-player detail panel.
 
 ## Advice
 
