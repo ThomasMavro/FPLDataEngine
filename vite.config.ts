@@ -8,7 +8,8 @@ export default defineConfig({
       '/api/fpl': {
         target: 'https://fantasy.premierleague.com',
         changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/api\/fpl/, '/api'),
+        // Mirrors api/fpl.ts: /api/fpl?path=<path> -> /api/<path>
+        rewrite: (p) => `/api/${new URL(p, 'http://localhost').searchParams.get('path') ?? ''}`,
         headers: { 'User-Agent': 'Mozilla/5.0 fpl-decision-engine' },
       },
     },
