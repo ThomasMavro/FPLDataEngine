@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
-// Forwards GET /api/fpl/<path> to https://fantasy.premierleague.com/api/<path> (avoids CORS).
-// vercel.json rewrites /api/fpl/<path> to /api/fpl?path=<path>, since catch-all
-// function filenames only work in Next.js projects.
+// Forwards GET /api/fpl?path=<path> to https://fantasy.premierleague.com/api/<path>/ (avoids CORS).
+// The path goes in the query string because catch-all function filenames only work in
+// Next.js projects, and a vercel.json rewrite did not match the trailing-slash FPL paths.
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
   const { path, ...rest } = req.query
