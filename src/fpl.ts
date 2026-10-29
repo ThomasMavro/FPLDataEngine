@@ -27,6 +27,7 @@ export function currentGameweek(events: Event[]): { id: number; isNext: boolean 
   const fin = events.filter((e) => e.finished)
   return fin.length ? { id: Math.max(...fin.map((e) => e.id)), isNext: false } : null
 }
+export interface SummaryFixture { event: number | null; is_home: boolean; difficulty: number; team_h: number; team_a: number }
 export interface HistoryRow { round: number; was_home: boolean; [k: string]: unknown }
 
 export type Pos = 1 | 2 | 3 | 4
