@@ -7,6 +7,8 @@ import { addCriterion, baseCriteria, equalWeights, removeCriterion, setWeight, t
 import MultiSelect, { Popover } from './MultiSelect'
 import Pitch from './Pitch'
 import AdvicePanel from './AdvicePanel'
+import PlayerProfile from './PlayerProfile'
+import { freeSlots, noSlotMessage, pickBanner } from './lib/slots'
 import MiniLeague from './MiniLeague'
 import { squadFromPicks, type Picks } from './lib/league'
 import type { RivalSquad, Strategy } from './lib/advice'
@@ -72,6 +74,9 @@ export default function App() {
   const [tick, setTick] = useState(0)
   const [xpN, setXpN] = useState(String(DEFAULT_N))
     const [selected, setSelected] = useState<number | null>(null)
+  const [profileId, setProfileId] = useState<number | null>(null)
+  const [picking, setPicking] = useState<{ pos: number; prev: number[] } | null>(null)
+  const tableRef = useRef<HTMLElement>(null)
   const [rivals, setRivals] = useState<RivalSquad[]>([])
   const [defStrategy, setDefStrategy] = useState<Strategy>('chasing')
 
@@ -236,12 +241,27 @@ export default function App() {
     if (err) return setMsg({ kind: 'err', text: err })
     setSquadIds([...squadIds, p.id]); setExcluded(excluded.filter((x) => x !== p.id)); setMsg(null)
   }
+  /** Table name click: add straight into a free slot of his position (the lineup places him), or explain why not. */
+  const quickAdd = (p: Player) => {
+    if (squadIds.includes(p.id)) return setMsg({ kind: 'err', text: `${p.name} is already in your squad.` })
+    const full = noSlotMessage(squad.map((c) => c.p), p.pos)
+    if (full) return setMsg({ kind: 'err', text: full })
+    add(p)
+    if (picking) cancelPick()
+  }
+  const startPick = (pos: number) => {
+    if (freeSlots(squad.map((c) => c.p), pos) === 0) return setMsg({ kind: 'err', text: noSlotMessage(squad.map((c) => c.p), pos)! })
+    setPicking((cur) => ({ pos, prev: cur ? cur.prev : posSel })); setPosSel([pos]); setMsg(null)
+    setTimeout(() => tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0)
+  }
+  const cancelPick = () => { if (picking) setPosSel(picking.prev); setPicking(null) }
   const remove = (id: number) => { setSquadIds(squadIds.filter((x) => x !== id)); setLocked(locked.filter((x) => x !== id)) }
   const lockToggle = (id: number) => { setLocked(toggle(locked, id)); setExcluded(excluded.filter((x) => x !== id)) }
   const excludeToggle = (id: number) => { setExcluded(toggle(excluded, id)); setLocked(locked.filter((x) => x !== id)); if (!excluded.includes(id)) remove(id) }
   const sortBy = (k: string) => { if (k === sortKey) setSortDir((d) => (d === 1 ? -1 : 1)); else { setSortKey(k); setSortDir(k === 'name' || k === 'team' ? 1 : -1) } }
   const th = (k: string, label: string) => <th key={k} onClick={() => sortBy(k)} className={sortKey === k ? 'sorted' : ''}>{label}{sortKey === k ? (sortDir === -1 ? ' ▼' : ' ▲') : ''}</th>
 
+  const profileEl = profileId != null ? data?.bs.elements.find((e) => e.id === profileId) : undefined
   const critTotal = totalWeight(weights)
   const cell = (id: string, c: Cand) =>
     id === 'minutes' ? Math.round(c.p.stats.minutes) : id === 'total_points' ? c.p.stats.total_points
@@ -361,7 +381,7 @@ export default function App() {
                 </div>
                 {msg && <div className={`msg ${msg.kind}`}>{msg.text}</div>}
                 {rules.length > 0 && <div className="msg err">{rules.join(' · ')}</div>}
-                <Pitch squad={squad} lineup={lineup} teams={teams} locked={new Set(locked)} onRemove={remove} onLock={lockToggle} xp={xpTotals} onSelect={setSelected} />
+                <Pitch squad={squad} lineup={lineup} teams={teams} locked={new Set(locked)} onRemove={remove} onLock={lockToggle} xp={xpTotals} onSelect={(id) => { setSelected(id); setProfileId(id) }} onEmpty={startPick} picking={picking?.pos ?? null} />
                 {excluded.length > 0 && <p className="hint">Excluded: {excluded.map((id) => <button key={id} className="chip on" onClick={() => excludeToggle(id)}>{baseById.get(id)?.name} x</button>)}</p>}
               </section>
 
@@ -373,12 +393,14 @@ export default function App() {
                   fixtures={data.fixtures} gws={xpGws} finishedGws={finishedGws} teams={teams} n={N} getHistory={getCachedHistory} rivals={rivals} defaultStrategy={defStrategy} />
               </section>
 
-              <section className="card">
+              <section className="card" ref={tableRef}>
                 <div className="bar"><h2>Players ranked by score</h2><span className="hint">{rows.length} players</span>
                   <div style={{ marginLeft: 'auto' }}><Popover align="right" label="Columns">
                     {optCols.map((c) => <label key={c.id} className="opt"><input type="checkbox" checked={shown(c.id)} onChange={() => toggleCol(c.id)} /> {c.label}</label>)}
                   </Popover></div>
                 </div>
+                {picking && <div className="pickbanner" role="status">{pickBanner(picking.pos)} · <button onClick={cancelPick}>Cancel</button></div>}
+                {msg && msg.kind === 'err' && <div className="msg err">{msg.text}</div>}
                 {rows.length === 0 && <p className="hint">{progress ? 'Loading…' : 'No players match the current filters.'}</p>}
                 <div className="twrap">
                   <table>
@@ -389,7 +411,7 @@ export default function App() {
                         const inSq = squadIds.includes(c.p.id)
                         return (
                           <tr key={c.p.id} className={excluded.includes(c.p.id) ? 'dim' : ''}>
-                            <td>{i + 1}</td><td className="nm">{c.p.name}{c.p.news && <span className="flag" title={c.p.news}>!</span>}</td>
+                            <td>{i + 1}</td><td className="nm"><button className="infob" title="Player profile" aria-label={`${c.p.name} profile`} onClick={() => setProfileId(c.p.id)}>i</button><button className="nmb" title="Add to squad" onClick={() => quickAdd(c.p)}>{c.p.name}</button>{c.p.news && <span className="flag" title={c.p.news}>!</span>}</td>
                             <td>{teams.get(c.p.team)?.short_name}</td><td>{POS_LABEL[c.p.pos]}</td>
                             <td>{c.p.cost.toFixed(1)}</td><td className="sc">{c.score.toFixed(1)}</td>
                             {optCols.filter((o) => shown(o.id)).map((o) => <td key={o.id}>{cell(o.id, c)}</td>)}
@@ -425,6 +447,13 @@ export default function App() {
           </div>
         )}
       </main>
+      {profileEl && (
+        <PlayerProfile el={profileEl} elements={data!.bs.elements} teams={teams} xp={xpAll.get(profileEl.id)}
+          inSquad={squadIds.includes(profileEl.id)} locked={locked.includes(profileEl.id)} excluded={excluded.includes(profileEl.id)}
+          onToggleSquad={() => { const pl = baseById.get(profileEl.id); if (squadIds.includes(profileEl.id)) remove(profileEl.id); else if (pl) add(pl) }}
+          onLock={() => { const pl = baseById.get(profileEl.id); if (pl && !squadIds.includes(pl.id)) { const err = canAdd(squad.map((s) => s.p), pl, budget); if (err) return setMsg({ kind: 'err', text: err }); setSquadIds([...squadIds, pl.id]) } lockToggle(profileEl.id) }}
+          onExclude={() => excludeToggle(profileEl.id)} onClose={() => setProfileId(null)} />
+      )}
     </>
   )
 }

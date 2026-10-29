@@ -1,5 +1,5 @@
 import { parsePicks, parseStandings, type Standings } from './lib/league'
-import type { Bootstrap, Fixture, HistoryRow } from './fpl'
+import type { Bootstrap, Fixture, HistoryRow, SummaryFixture } from './fpl'
 
 const BASE = '/api/fpl'
 
@@ -29,7 +29,19 @@ export const fetchFixtures = () => getJson<Fixture[]>('fixtures/')
 const cache = new Map<number, HistoryRow[]>()
 export const getCachedHistory = (id: number) => cache.get(id)
 /** In-memory only (per page load); cleared by "Refresh data" so histories are refetched. Nothing is written to localStorage. */
-export const clearHistoryCache = () => cache.clear()
+export const clearHistoryCache = () => { cache.clear(); summaryCache.clear() }
+
+export interface PlayerSummary { history: HistoryRow[]; fixtures: SummaryFixture[] }
+const summaryCache = new Map<number, PlayerSummary>()
+/** element-summary for one player (history + upcoming fixtures); cached in memory and shares the history cache. */
+export async function fetchSummary(id: number): Promise<PlayerSummary> {
+  const hit = summaryCache.get(id)
+  if (hit) return hit
+  const d = await getJson<{ history?: HistoryRow[]; fixtures?: SummaryFixture[] }>(`element-summary/${id}/`)
+  const s = { history: d.history ?? [], fixtures: d.fixtures ?? [] }
+  summaryCache.set(id, s); cache.set(id, s.history)
+  return s
+}
 
 /** Fetch element-summary history for the given players with limited concurrency; results are cached. */
 export async function fetchHistories(ids: number[], onProgress?: (done: number, total: number) => void, limit = 6, signal?: { cancelled: boolean }) {
