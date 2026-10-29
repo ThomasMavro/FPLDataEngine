@@ -4,6 +4,8 @@ import { aggregatePlayer, POS_LABEL, seasonPlayer, STAT_LABEL, STATS, type Boots
 import { scorePlayers } from './scoring'
 import { canAdd, generateSquad, pickLineup, validateSquad, type Cand } from './squad'
 import Pitch from './Pitch'
+import { XpChart, XpDetail, type XpEntry } from './XpChart'
+import { buildContext, clampN, DEFAULT_N, fixturesByTeam, MAX_N, MIN_N, playerXp, sumXp, upcomingGws, type GwXp } from './lib/xp'
 
 type Venue = 'all' | 'home' | 'away'
 const num = (v: string, d: number) => (v.trim() === '' || !Number.isFinite(Number(v)) ? d : Number(v))
@@ -42,6 +44,9 @@ export default function App() {
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const [failed, setFailed] = useState(0)
   const [tick, setTick] = useState(0)
+  const [xpN, setXpN] = useState(String(DEFAULT_N))
+  const [xpGen, setXpGen] = useState(false)
+  const [selected, setSelected] = useState<number | null>(null)
 
   useEffect(() => {
     setError(null)
@@ -54,7 +59,21 @@ export default function App() {
   }, [reload])
 
   const teams = useMemo(() => new Map((data?.bs.teams ?? []).map((t) => [t.id, t])), [data])
-  const base = useMemo(() => (data?.bs.elements ?? []).map(seasonPlayer), [data])
+  const base0 = useMemo(() => (data?.bs.elements ?? []).map(seasonPlayer), [data])
+  const N = clampN(num(xpN, DEFAULT_N))
+  const finishedGws = useMemo(() => (data?.bs.events ?? []).filter((e) => e.finished).length, [data])
+  const xpGws = useMemo(() => upcomingGws(data?.bs.events ?? [], N), [data, N])
+  const xpCtx = useMemo(() => data ? buildContext(data.bs.teams, base0, data.bs.elements.some((e) => 'defensive_contribution_per_90' in e)) : null, [data, base0])
+  const teamFix = useMemo(() => fixturesByTeam(data?.fixtures ?? [], xpGws), [data, xpGws])
+  // xP per GW for every player; uses last-5-GW minutes from history where it has been loaded (tick refreshes).
+  const xpAll = useMemo(() => {
+    void tick
+    const m = new Map<number, GwXp[]>()
+    if (!xpCtx) return m
+    for (const p of base0) m.set(p.id, playerXp(p, xpGws, teamFix.get(p.team), xpCtx, getCachedHistory(p.id), finishedGws))
+    return m
+  }, [base0, xpGws, teamFix, xpCtx, finishedGws, tick])
+  const base = useMemo(() => base0.map((p): Player => ({ ...p, stats: { ...p.stats, xp: sumXp(xpAll.get(p.id) ?? []) } })), [base0, xpAll])
   const baseById = useMemo(() => new Map(base.map((p) => [p.id, p])), [base])
   const maxGw = useMemo(() => {
     const ev = (data?.bs.events ?? []).filter((e) => e.finished || e.is_current)
@@ -73,22 +92,23 @@ export default function App() {
   const from = Math.max(1, num(gwFrom, 1)), to = Math.min(maxGw || 99, num(gwTo, maxGw || 99))
   const rangeSet = (gwFrom !== '' && from > 1) || (gwTo !== '' && to < maxGw)
   const needsHistory = rangeSet || venue !== 'all'
+  const xpActive = (weights.xp ?? 0) !== 0 || xpGen
 
   const prefiltered = useMemo(() => base.filter((p) =>
     p.cost >= priceMin && p.cost <= priceMax && p.stats.minutes >= minMinutes &&
     (teamSel.length === 0 || teamSel.includes(p.team)) && (posSel.length === 0 || posSel.includes(p.pos)) &&
     (!needsHistory || p.stats.minutes > 0)), [base, priceMin, priceMax, minMinutes, teamSel, posSel, needsHistory])
 
-  const idsKey = needsHistory ? prefiltered.map((p) => p.id).join(',') : ''
+  const idsKey = needsHistory || xpActive ? prefiltered.filter((p) => p.stats.minutes > 0).map((p) => p.id).join(',') : ''
   useEffect(() => {
-    if (!needsHistory) { setProgress(null); return }
+    if (!needsHistory && !xpActive) { setProgress(null); return }
     const sig = { cancelled: false }
     const ids = idsKey ? idsKey.split(',').map(Number) : []
     setProgress({ done: 0, total: ids.length })
     fetchHistories(ids, (done, total) => { if (!sig.cancelled) { setProgress({ done, total }); if (done % 20 === 0) setTick((t) => t + 1) } }, 6, sig)
       .then((f) => { if (!sig.cancelled) { setFailed(f); setProgress(null); setTick((t) => t + 1) } })
     return () => { sig.cancelled = true }
-  }, [idsKey, needsHistory])
+  }, [idsKey, needsHistory, xpActive])
 
   const pool: Player[] = useMemo(() => {
     void tick
@@ -104,7 +124,7 @@ export default function App() {
     return out
   }, [prefiltered, needsHistory, tick, from, to, venue, minMinutes])
 
-  const scores = useMemo(() => scorePlayers(pool, weights, perPos), [pool, weights, perPos])
+  const scores = useMemo(() => xpGen ? new Map(pool.map((p) => [p.id, p.stats.xp])) : scorePlayers(pool, weights, perPos), [pool, weights, perPos, xpGen])
   const poolById = useMemo(() => new Map(pool.map((p) => [p.id, p])), [pool])
   const cand = (p: Player): Cand => ({ p: poolById.get(p.id) ?? p, score: scores.get(p.id) ?? 0 })
 
@@ -118,12 +138,25 @@ export default function App() {
   }, [pool, scores, sortKey, sortDir, teams])
 
   const squad: Cand[] = useMemo(() => squadIds.map((id) => baseById.get(id)).filter(Boolean).map((p) => cand(p!)), [squadIds, baseById, poolById, scores]) // eslint-disable-line react-hooks/exhaustive-deps
+  // squad players' history (for last-5-GW minutes) is always fetched so the chart is as accurate as possible
+  const sqKey = squadIds.join(',')
+  useEffect(() => {
+    if (!sqKey) return
+    const sig = { cancelled: false }
+    fetchHistories(sqKey.split(',').map(Number), undefined, 6, sig).then(() => { if (!sig.cancelled) setTick((t) => t + 1) })
+    return () => { sig.cancelled = true }
+  }, [sqKey])
   const lineup = useMemo(() => pickLineup(squad), [squad])
+  const xpEntries: XpEntry[] = useMemo(() => {
+    const xi = new Set(lineup.xi.map((c) => c.p.id))
+    return squad.map((c) => ({ p: c.p, gws: xpAll.get(c.p.id) ?? [], inXi: xi.has(c.p.id) }))
+  }, [squad, lineup, xpAll])
+  const xpTotals = useMemo(() => new Map(squad.map((c) => [c.p.id, sumXp(xpAll.get(c.p.id) ?? [])])), [squad, xpAll])
   const spent = squad.reduce((a, c) => a + c.p.cost, 0)
   const rules = validateSquad(squad.map((c) => c.p), budget)
 
   const activeStats = Object.keys(weights)
-  const extraCols = activeStats.filter((k) => !['now_cost', 'minutes', 'total_points'].includes(k)).slice(0, 4)
+  const extraCols = activeStats.filter((k) => !['now_cost', 'minutes', 'total_points', 'xp'].includes(k)).slice(0, 4)
 
   const generate = () => {
     const lockedC = locked.map((id) => baseById.get(id)).filter(Boolean).map((p) => cand(p!))
@@ -216,10 +249,24 @@ export default function App() {
                     <button className="btn" onClick={() => { setSquadIds([]); setLocked([]); setMsg(null) }}>Clear</button>
                   </div>
                 </div>
+                <label className="check"><input type="checkbox" checked={xpGen} onChange={(e) => setXpGen(e.target.checked)} /> Generate and rank on xP (next {N} GWs) instead of the weighted score</label>
                 {msg && <div className={`msg ${msg.kind}`}>{msg.text}</div>}
                 {rules.length > 0 && <div className="msg err">{rules.join(' · ')}</div>}
-                <Pitch squad={squad} lineup={lineup} teams={teams} locked={new Set(locked)} onRemove={remove} onLock={lockToggle} />
+                <Pitch squad={squad} lineup={lineup} teams={teams} locked={new Set(locked)} onRemove={remove} onLock={lockToggle} xp={xpTotals} onSelect={setSelected} />
                 {excluded.length > 0 && <p className="hint">Excluded: {excluded.map((id) => <button key={id} className="chip on" onClick={() => excludeToggle(id)}>{baseById.get(id)?.name} x</button>)}</p>}
+              </section>
+
+              <section className="card">
+                <div className="bar"><h2>Expected points, next {N} GWs</h2>
+                  <label className="inline">Gameweeks ({MIN_N}-{MAX_N})<input type="number" min={MIN_N} max={MAX_N} value={xpN} onChange={(e) => setXpN(e.target.value)} onBlur={() => setXpN(String(N))} /></label>
+                </div>
+                {squad.length === 0 ? <p className="hint">Add or generate players to see their expected points per gameweek.</p> : xpGws.length === 0 ? <p className="hint">No upcoming gameweeks.</p> : (
+                  <>
+                    <XpChart entries={xpEntries} gws={xpGws} />
+                    <XpDetail entries={xpEntries} gws={xpGws} teams={teams} selected={selected} onSelect={setSelected} />
+                  </>
+                )}
+                <p className="hint">Model: appearance, goals, assists, clean sheets, goals conceded, saves, bonus and defensive contribution, adjusted by opponent strength; double GWs summed, blanks score 0. Minutes use the last 5 GWs when history is loaded.</p>
               </section>
 
               <section className="card">
@@ -227,7 +274,7 @@ export default function App() {
                 {rows.length === 0 && <p className="hint">{progress ? 'Loading…' : 'No players match the current filters.'}</p>}
                 <div className="twrap">
                   <table>
-                    <thead><tr><th>#</th>{th('name', 'Player')}{th('team', 'Club')}{th('pos', 'Pos')}{th('now_cost', 'Price')}{th('minutes', 'Mins')}{th('total_points', 'Pts')}{extraCols.map((k) => th(k, STAT_LABEL[k]))}<th>Next</th>{th('score', 'Score')}<th></th></tr></thead>
+                    <thead><tr><th>#</th>{th('name', 'Player')}{th('team', 'Club')}{th('pos', 'Pos')}{th('now_cost', 'Price')}{th('minutes', 'Mins')}{th('total_points', 'Pts')}{extraCols.map((k) => th(k, STAT_LABEL[k]))}<th>Next</th>{th('xp', `xP (${N} GW)`)}{th('score', xpGen ? 'Score (xP)' : 'Score')}<th></th></tr></thead>
                     <tbody>
                       {rows.slice(0, showN).map((c, i) => {
                         const inSq = squadIds.includes(c.p.id)
@@ -238,6 +285,7 @@ export default function App() {
                             <td>{c.p.cost.toFixed(1)}</td><td>{Math.round(c.p.stats.minutes)}</td><td>{c.p.stats.total_points}</td>
                             {extraCols.map((k) => <td key={k}>{(c.p.stats[k] ?? 0).toFixed(2)}</td>)}
                             <td>{nextFix.get(c.p.team) ?? '-'}</td>
+                            <td>{(c.p.stats.xp ?? 0).toFixed(1)}</td>
                             <td className="sc">{c.score.toFixed(2)}</td>
                             <td className="acts">
                               <button disabled={inSq} onClick={() => add(c.p)}>{inSq ? 'In' : 'Add'}</button>

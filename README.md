@@ -25,4 +25,8 @@ Import the repo in Vercel (framework preset: Vite). `api/fpl.ts` is deployed as 
 
 ## Not yet done
 
-Transfers/free-hit planning, fixture difficulty weighting, price-change prediction, persistence of settings.
+Transfers/free-hit planning, price-change prediction, persistence of settings.
+
+## Expected points (xP)
+
+`src/lib/xp.ts` documents and implements the xP model (appearance, goals, assists, clean sheets, goals conceded, saves, bonus, defensive contribution, scaled by opponent strength; double GWs summed). "xP (next N GWs)" (N 1-8, default 5) is a table column and a weighting criterion, drives the squad xP chart and per-player detail panel, and can replace the weighted score in the generator via a toggle.

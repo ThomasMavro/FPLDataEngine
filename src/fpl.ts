@@ -1,5 +1,9 @@
 // Types + stat helpers for the public FPL API (bootstrap-static, element-summary).
-export interface Team { id: number; name: string; short_name: string; code: number }
+export interface Team {
+  id: number; name: string; short_name: string; code: number
+  strength_attack_home?: number; strength_attack_away?: number
+  strength_defence_home?: number; strength_defence_away?: number
+}
 export interface Element {
   id: number; web_name: string; team: number; element_type: number; now_cost: number
   status?: string; news?: string
@@ -10,7 +14,10 @@ export interface Bootstrap {
   elements: Element[]; teams: Team[]; events: Event[]
   element_types: { id: number; singular_name_short: string; plural_name_short?: string }[]
 }
-export interface Fixture { id: number; event: number | null; team_h: number; team_a: number; finished: boolean }
+export interface Fixture {
+  id: number; event: number | null; team_h: number; team_a: number; finished: boolean
+  team_h_difficulty?: number; team_a_difficulty?: number
+}
 export interface HistoryRow { round: number; was_home: boolean; [k: string]: unknown }
 
 export type Pos = 1 | 2 | 3 | 4
@@ -41,12 +48,15 @@ export const STATS: StatDef[] = [
   { key: 'defensive_contribution_per_90', label: 'Def. contribution per 90' },
   { key: 'transfers_in_event', label: 'Transfers in (GW)' }, { key: 'transfers_out_event', label: 'Transfers out (GW)' },
   { key: 'value', label: 'Value (pts per £m)' },
+  { key: 'xp', label: 'xP (next N GWs)' }, // computed in src/lib/xp.ts, injected by the app
 ]
 export const STAT_LABEL: Record<string, string> = Object.fromEntries(STATS.map((s) => [s.key, s.label]))
 
 export interface Player {
   id: number; name: string; team: number; pos: number; cost: number // £m
   status: string; news: string
+  /** chance_of_playing_next_round (0-100), null = no flag. */
+  chance: number | null; starts: number
   stats: Record<string, number>
 }
 
@@ -66,7 +76,8 @@ export function seasonPlayer(el: Element): Player {
   const cost = el.now_cost / 10
   return {
     id: el.id, name: el.web_name, team: el.team, pos: el.element_type, cost,
-    status: String(el.status ?? 'a'), news: String(el.news ?? ''), stats: finish(stats, cost),
+    status: String(el.status ?? 'a'), news: String(el.news ?? ''),
+    chance: el.chance_of_playing_next_round == null ? null : n(el.chance_of_playing_next_round), starts: n(el.starts), stats: finish(stats, cost),
   }
 }
 
