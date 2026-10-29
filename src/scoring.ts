@@ -1,11 +1,15 @@
-import type { Player } from './fpl'
+import { defaultDirection, type Direction, type Player } from './fpl'
 
-export type Weights = Record<string, number>
+export type { Weights } from './lib/weights'
+import type { Weights } from './lib/weights'
 
-/** Score = sum(weight * minmax-normalised stat) within the pool (optionally per position). */
-export function scorePlayers(pool: Player[], weights: Weights, perPosition = false): Map<number, number> {
+/**
+ * Score = sum(weight% * minmax-normalised stat) within the pool (optionally per position), so 0-100 when weights sum to 100.
+ * Lower-is-better criteria (direction 'down'; the default for goals conceded, cards, price...) use 1 - normalised.
+ */
+export function scorePlayers(pool: Player[], weights: Weights, perPosition = false, directions: Record<string, Direction> = {}): Map<number, number> {
   const out = new Map<number, number>()
-  const active = Object.entries(weights).filter(([, w]) => w !== 0)
+  const active = Object.entries(weights).filter(([, w]) => w > 0)
   const groups = new Map<number, Player[]>()
   for (const p of pool) {
     const g = perPosition ? p.pos : 0
@@ -22,7 +26,8 @@ export function scorePlayers(pool: Player[], weights: Weights, perPosition = fal
       let s = 0
       active.forEach(([k, w], i) => {
         const { min, max } = range[i]
-        const norm = max > min ? ((p.stats[k] ?? 0) - min) / (max - min) : 0
+        let norm = max > min ? ((p.stats[k] ?? 0) - min) / (max - min) : 0
+        if ((directions[k] ?? defaultDirection(k)) === 'down') norm = max > min ? 1 - norm : 0
         s += w * norm
       })
       out.set(p.id, s)

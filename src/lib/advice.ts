@@ -18,6 +18,7 @@
  * Plan gain in mini-league mode is sum(score(in)) - sum(score(out)); the displayed xP gain stays raw.
  */
 import { MAX_PER_CLUB, type Fixture, type HistoryRow, type Player } from '../fpl'
+import { formationAllowed, type FormationConstraint } from '../squad'
 import { expectedMinutes, sumXp, type GwXp } from './xp'
 
 export const HIT_COST = 4
@@ -60,6 +61,8 @@ export interface AdviceInput {
   finishedGws?: number
   getHistory?: (id: number) => HistoryRow[] | undefined
   miniLeague?: MiniLeague
+  /** Optional starting-XI shape that bench swaps must keep. */
+  formation?: FormationConstraint
 }
 
 export const isFlagged = (p: Player) => p.status !== 'a' || (p.chance != null && p.chance < 75)
@@ -167,7 +170,7 @@ export function benchSwaps(inp: AdviceInput): BenchSwap[] {
   const xi = new Set(inp.xiIds)
   const starters = inp.squad.filter((p) => xi.has(p.id)), bench = inp.squad.filter((p) => !xi.has(p.id))
   const counts = (ps: Player[]) => [1, 2, 3, 4].map((pos) => ps.filter((p) => p.pos === pos).length)
-  const valid = (ps: Player[]) => { const [g, d, m, f] = counts(ps); return ps.length === 11 && g === 1 && d >= 3 && m >= 2 && f >= 1 }
+  const valid = (ps: Player[]) => { const [g, d, m, f] = counts(ps); return ps.length === 11 && g === 1 && d >= 3 && m >= 2 && f >= 1 && formationAllowed([d, m, f], inp.formation) }
   const out: BenchSwap[] = []
   for (const b of bench) {
     let best: BenchSwap | null = null
@@ -215,4 +218,55 @@ export function buildAdvice(inp: AdviceInput, rivals?: RivalSquad[]): Advice {
     transfers: transferSuggestions(inp), captains: captainPicks(inp), swings: fixtureSwings(inp),
     bench: benchSwaps(inp), flags: flags(inp), miniLeague: rivals && rivals.length ? miniLeagueView(inp.squad, rivals) : undefined,
   }
+}
+
+const pct = (x: number) => `${Math.round(x * 100)}%`
+const num1 = (x: number) => Math.abs(x).toFixed(1)
+
+/** Share of rivals whose starting XI contains the player (plain ownership, unlike EO this ignores captaincy). */
+export function rivalOwnership(rivals: RivalSquad[], id: number): number {
+  return rivals.length ? rivals.filter((r) => r.ids.includes(id)).length / rivals.length : 0
+}
+
+/** 1-2 sentence general summary of the advice, with no mini-league data needed. */
+export function generalSummary(advice: Advice, n: number): string {
+  const out: string[] = []
+  const t = advice.transfers.one[0]
+  const span = `over the next ${n} GW${n === 1 ? '' : 's'}`
+  if (t && t.gain > 0.05) {
+    const s = t.swaps[0]
+    out.push(`Your best single transfer is ${s.out.name} → ${s.inn.name} (+${num1(t.gain)} xP ${span}${t.gain > HIT_COST ? ', enough to justify a -4 hit' : ''}).`)
+  } else out.push(`No single transfer clearly improves your squad ${span}.`)
+  const c = advice.captains[0]
+  const flagged = advice.flags.filter((f) => f.reason === 'injury').length
+  const tail = [c ? `${c.player.name} is the top captain pick (${num1(c.xp)} xP next GW)` : '', flagged ? `${flagged} player${flagged === 1 ? ' is' : 's are'} flagged for availability` : ''].filter(Boolean)
+  if (tail.length) out.push(`${tail.join('; ')}.`)
+  return out.join(' ')
+}
+
+export interface RecommendationInput {
+  advice: Advice; rivals: RivalSquad[]; strategy: Strategy; n: number
+  /** Points behind the league leader (0 = leading); omit when standings are unknown. */
+  leaderGap?: number | null
+}
+/** 1-3 sentence plain-English mini-league summary: gap, best move (with rival ownership) and captain (with rival EO). */
+export function recommendationSummary({ advice, rivals, strategy, n, leaderGap }: RecommendationInput): string {
+  const eo = effectiveOwnership(rivals)
+  const out: string[] = []
+  if (leaderGap != null) out.push(leaderGap > 0 ? `You're ${leaderGap} pt${leaderGap === 1 ? '' : 's'} behind the leader.` : `You lead the league.`)
+  const t = advice.transfers.one[0]
+  if (t && t.gain > 0.05) {
+    const s = t.swaps[0], own = rivalOwnership(rivals, s.inn.id), e = eo.get(s.inn.id) ?? 0
+    const kind = eoLabel(e) === 'differential' ? 'a differential' : eoLabel(e) === 'cover' ? 'cover' : 'a balanced pick'
+    out.push(`Your best move is ${s.out.name} → ${s.inn.name} (+${num1(t.gain)} xP over ${n} GW${n === 1 ? '' : 's'}), ${kind} owned by ${pct(own)} of rivals.`)
+  } else out.push(`No transfer beats your current squad on xP, so hold your transfer.`)
+  const c = advice.captains[0]
+  if (c) {
+    const own = rivalOwnership(rivals, c.player.id), e = eo.get(c.player.id) ?? 0
+    const why = strategy === 'protecting'
+      ? (e >= COVER_EO ? 'captaining him protects you' : 'a less popular captain adds risk when you are leading')
+      : (e >= COVER_EO ? 'captaining him only keeps you level with them' : e < DIFFERENTIAL_EO ? 'captaining him is a differential that can gain ground' : 'captaining him is a balanced choice')
+    out.push(`Captain ${c.player.name}; ${pct(own)} of rivals own him, so ${why}.`)
+  }
+  return out.join(' ')
 }

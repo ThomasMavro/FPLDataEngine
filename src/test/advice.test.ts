@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Fixture, Player } from '../fpl'
-import { benchSwaps, buildAdvice, captainPicks, effectiveOwnership, eoLabel, fixtureSwings, flags, miniLeagueScore, transferSuggestions, type AdviceInput } from '../lib/advice'
+import { benchSwaps, buildAdvice, generalSummary, recommendationSummary, rivalOwnership, captainPicks, effectiveOwnership, eoLabel, fixtureSwings, flags, miniLeagueScore, transferSuggestions, type AdviceInput } from '../lib/advice'
 import type { GwXp } from '../lib/xp'
 
 const pl = (id: number, pos: number, team: number, cost: number, over: Partial<Player> = {}): Player => ({
@@ -153,5 +153,52 @@ describe('fixtureSwings', () => {
     expect(r.worsening.map((x) => x.player.id)).toEqual([1])
     expect(r.worsening[0].swing).toBeCloseTo(3)
     expect(r.easiest[0].team).toBe(2)
+  })
+})
+
+describe('formation-aware bench advice', () => {
+  it('rejects bench swaps that break an exact formation', () => {
+    // XI is 4-4-2 (ids 3-6 DEF, 8-11 MID, 13-14 FWD); bench MID 12 would replace a FWD (3-5-1... invalid) or a DEF
+    const xp = xpMap({ 12: gx(9, 9), 13: gx(1, 1), 14: gx(1, 1) })
+    const free = benchSwaps(input({ xp }))
+    expect(free.some((b) => b.bench.id === 12)).toBe(true)
+    const exact = benchSwaps(input({ xp, formation: { max: { 2: 4, 3: 4, 4: 2 }, exact: true } }))
+    expect(exact.some((b) => b.bench.id === 12 && b.starter.pos !== 3)).toBe(false)
+  })
+})
+
+describe('summaries', () => {
+  const squadCost = squad.reduce((a, p) => a + p.cost, 0)
+  const star = pl(100, 3, 7, 8)
+  const mk = (rivals: { ids: number[]; captain: number }[]) => {
+    const xp = xpMap({ 8: gx(1, 1), 100: gx(4, 4), 14: gx(6, 6) })
+    const inp = input({ pool: [...squad, star], xp, budget: squadCost + 1, miniLeague: { eo: effectiveOwnership(rivals), strategy: 'chasing' } })
+    return buildAdvice(inp, rivals)
+  }
+  it('computes plain rival ownership', () => {
+    expect(rivalOwnership([{ ids: [1, 2], captain: 1 }, { ids: [2], captain: 2 }], 1)).toBe(0.5)
+    expect(rivalOwnership([], 1)).toBe(0)
+  })
+  it('general summary names the best transfer and captain', () => {
+    const t = generalSummary(mk([]), 2)
+    expect(t).toMatch(/P8 → P100/)
+    expect(t).toMatch(/P14 is the top captain/)
+  })
+  it('general summary handles no useful transfer', () => {
+    expect(generalSummary(buildAdvice(input()), 2)).toMatch(/No single transfer/)
+  })
+  it('recommendation summary reports gap, differential move and captain EO', () => {
+    const rivals = [{ ids: [14, 1], captain: 14 }, { ids: [14], captain: 14 }, { ids: [14], captain: 14 }, { ids: [14], captain: 14 }, { ids: [14, 100], captain: 14 }, { ids: [14], captain: 14 }]
+    const t = recommendationSummary({ advice: mk(rivals), rivals, strategy: 'chasing', n: 2, leaderGap: 23 })
+    expect(t).toMatch(/^You're 23 pts behind the leader\./)
+    expect(t).toMatch(/P8 → P100 \(\+6\.0 xP over 2 GWs\), a differential owned by 17% of rivals/)
+    expect(t).toMatch(/Captain P14; 100% of rivals own him/)
+    expect(t.split(/(?<=\.) /).length).toBeLessThanOrEqual(3)
+  })
+  it('recommendation summary says when you lead and protecting wording', () => {
+    const rivals = [{ ids: [14], captain: 14 }]
+    const t = recommendationSummary({ advice: mk(rivals), rivals, strategy: 'protecting', n: 1, leaderGap: 0 })
+    expect(t).toMatch(/^You lead the league\./)
+    expect(t).toMatch(/protects you/)
   })
 })

@@ -18,6 +18,15 @@ export interface Fixture {
   id: number; event: number | null; team_h: number; team_a: number; finished: boolean
   team_h_difficulty?: number; team_a_difficulty?: number
 }
+/** Gameweek to show as "current": is_current, else is_next, else the last finished one. */
+export function currentGameweek(events: Event[]): { id: number; isNext: boolean } | null {
+  const cur = events.find((e) => e.is_current)
+  if (cur) return { id: cur.id, isNext: false }
+  const next = events.find((e) => e.is_next)
+  if (next) return { id: next.id, isNext: true }
+  const fin = events.filter((e) => e.finished)
+  return fin.length ? { id: Math.max(...fin.map((e) => e.id)), isNext: false } : null
+}
 export interface HistoryRow { round: number; was_home: boolean; [k: string]: unknown }
 
 export type Pos = 1 | 2 | 3 | 4
@@ -28,7 +37,7 @@ export const MAX_PER_CLUB = 3
 export interface StatDef { key: string; label: string; negative?: boolean }
 export const STATS: StatDef[] = [
   { key: 'total_points', label: 'Total points' }, { key: 'event_points', label: 'GW points' },
-  { key: 'form', label: 'Form' }, { key: 'points_per_game', label: 'Points per game' },
+  { key: 'points_per_game', label: 'Points per game' },
   { key: 'selected_by_percent', label: 'Selected by %' }, { key: 'now_cost', label: 'Price (£m)', negative: true },
   { key: 'minutes', label: 'Minutes' }, { key: 'goals_scored', label: 'Goals' }, { key: 'assists', label: 'Assists' },
   { key: 'clean_sheets', label: 'Clean sheets' }, { key: 'goals_conceded', label: 'Goals conceded', negative: true },
@@ -50,6 +59,9 @@ export const STATS: StatDef[] = [
   { key: 'value', label: 'Value (pts per £m)' },
   { key: 'xp', label: 'xP (next N GWs)' }, // computed in src/lib/xp.ts, injected by the app
 ]
+/** Direction a stat is scored in by default: 'down' for lower-is-better stats (goals conceded, cards, price...). */
+export type Direction = 'up' | 'down'
+export const defaultDirection = (key: string): Direction => (STATS.find((s) => s.key === key)?.negative ? 'down' : 'up')
 export const STAT_LABEL: Record<string, string> = Object.fromEntries(STATS.map((s) => [s.key, s.label]))
 
 export interface Player {
@@ -96,8 +108,6 @@ export function aggregatePlayer(base: Player, rows: HistoryRow[]): Player {
   const last = rows[rows.length - 1]
   s.event_points = last ? n(last.total_points) : 0
   s.points_per_game = played.length ? s.total_points / played.length : 0
-  const recent = played.slice(-5)
-  s.form = recent.length ? recent.reduce((a, r) => a + n(r.total_points), 0) / recent.length : 0
   const m = s.minutes
   s.expected_goals_per_90 = per90(s.expected_goals, m)
   s.expected_assists_per_90 = per90(s.expected_assists, m)

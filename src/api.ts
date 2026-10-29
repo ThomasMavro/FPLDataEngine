@@ -28,6 +28,8 @@ export const fetchFixtures = () => getJson<Fixture[]>('fixtures/')
 
 const cache = new Map<number, HistoryRow[]>()
 export const getCachedHistory = (id: number) => cache.get(id)
+/** In-memory only (per page load); cleared by "Refresh data" so histories are refetched. Nothing is written to localStorage. */
+export const clearHistoryCache = () => cache.clear()
 
 /** Fetch element-summary history for the given players with limited concurrency; results are cached. */
 export async function fetchHistories(ids: number[], onProgress?: (done: number, total: number) => void, limit = 6, signal?: { cancelled: boolean }) {
