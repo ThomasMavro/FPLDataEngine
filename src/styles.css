@@ -75,3 +75,7 @@ td.nm { font-weight:800 } td.sc { font-weight:900; color:var(--purple) } .flag {
 .tag { background:#eee9f1; color:var(--purple) } .tag.captain, .tag.differential { background:var(--green); color:var(--purple) } .tag.vice, .tag.cover { background:var(--cyan); color:var(--purple) }
 .tag.injury { background:#ffe5ee; color:#a0003a } .tag.minutes { background:#fff4d6; color:#7a5200 }
 @media (max-width:760px) { .advgrid { grid-template-columns:1fr } }
+
+/* Mini-league standings */
+table.league td small { display:block; color:var(--muted); font-weight:500 }
+table.league tr.me td { background:linear-gradient(90deg,rgba(0,255,135,.28),rgba(4,245,255,.2)); font-weight:800 }
