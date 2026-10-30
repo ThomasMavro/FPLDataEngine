@@ -4,7 +4,7 @@ A Fantasy Premier League assistant that turns live FPL data into decisions. You 
 
 **[Open the live tool](https://fpl-data-engine.vercel.app)**
 
-<!-- Screenshots: add docs/screenshot-squad.png (pitch + generated squad) and docs/screenshot-advice.png (Advice panel) -->
+![Generated squad](docs/screenshot-squad.png)
 
 ## What it does
 
